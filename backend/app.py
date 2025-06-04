@@ -5,18 +5,20 @@ Handles inference, training, and model management
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List
 import asyncio
 import json
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 
 from inference import InferenceEngine
 from training import TrainingEngine
+from scene_parser import parse_scene_xml, generate_llm_context
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -34,6 +36,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files for scenes
+scenes_path = Path(__file__).parent.parent / "scenes"
+if scenes_path.exists():
+    app.mount("/scenes", StaticFiles(directory=str(scenes_path)), name="scenes")
+
 # Initialize engines
 inference_engine = InferenceEngine()
 training_engine = TrainingEngine()
@@ -50,6 +57,11 @@ class TrainingRequest(BaseModel):
 
 class ModelSelectionRequest(BaseModel):
     model: str
+
+class PolicyGenerationRequest(BaseModel):
+    prompt: str                    # "Pick up the red block"
+    scene_name: str               # "manipulation/universal_robots_ur5e"  
+    model: Optional[str] = None   # LLM model override
 
 @app.get("/")
 async def root():
@@ -135,23 +147,42 @@ async def get_available_llm_models():
 
 @app.get("/api/scenes")
 async def list_scenes():
-    """List available robot scenes"""
-    scenes_dir = Path("../scenes")
-    if not scenes_dir.exists():
-        return {"scenes": []}
+    """List available robot scenes organized by category"""
+    if not scenes_path.exists():
+        return {"scenes": {}}
     
-    scenes = []
-    for scene_dir in scenes_dir.iterdir():
-        if scene_dir.is_dir():
-            xml_file = scene_dir / "robot.xml"
-            if xml_file.exists():
-                scenes.append({
-                    "name": scene_dir.name,
-                    "path": str(xml_file),
-                    "thumbnail": str(scene_dir / "thumbnail.png") if (scene_dir / "thumbnail.png").exists() else None
-                })
+    scenes_by_category = {}
     
-    return {"scenes": scenes}
+    # Iterate through category directories (manipulation, locomotion, simple)
+    for category_dir in scenes_path.iterdir():
+        if category_dir.is_dir():
+            category_name = category_dir.name
+            scenes_in_category = []
+            
+            # Look for robot/scene XML files in each scene subdirectory
+            for scene_dir in category_dir.iterdir():
+                if scene_dir.is_dir():
+                    # Try different XML file names
+                    xml_files = ["scene.xml", "robot.xml", "ur5e.xml"]
+                    xml_file = None
+                    for xml_name in xml_files:
+                        if (scene_dir / xml_name).exists():
+                            xml_file = scene_dir / xml_name
+                            break
+                    
+                    if xml_file:
+                        scenes_in_category.append({
+                            "name": scene_dir.name,
+                            "category": category_name,
+                            "xml_path": f"scenes/{category_name}/{scene_dir.name}/{xml_file.name}",
+                            "thumbnail": f"scenes/{category_name}/{scene_dir.name}/thumbnail.png" 
+                            if (scene_dir / "thumbnail.png").exists() else None
+                        })
+            
+            if scenes_in_category:
+                scenes_by_category[category_name] = scenes_in_category
+    
+    return {"scenes": scenes_by_category}
 
 @app.post("/api/model/select")
 async def select_model(request: ModelSelectionRequest):
@@ -169,6 +200,99 @@ async def get_current_model():
         "model": inference_engine.get_current_model(),
         "info": inference_engine.get_available_models().get(inference_engine.get_current_model(), {})
     }
+
+@app.post("/api/policy/generate")
+async def generate_policy(request: PolicyGenerationRequest):
+    """Generate policy with multiple reward approaches using scene context"""
+    try:
+        # Parse scene XML to get structure
+        scenes_dir = Path(__file__).parent.parent / "scenes"
+        scene_path = scenes_dir / request.scene_name
+        
+        # Try different XML file names
+        xml_files = ["scene.xml", "robot.xml", "ur5e.xml"]
+        xml_file = None
+        for xml_name in xml_files:
+            if (scene_path / xml_name).exists():
+                xml_file = scene_path / xml_name
+                break
+        
+        if not xml_file:
+            raise HTTPException(status_code=404, detail=f"Scene XML not found for {request.scene_name}")
+        
+        # Parse scene structure
+        scene_structure = parse_scene_xml(str(xml_file))
+        
+        # Generate LLM context with scene information
+        llm_context = generate_llm_context(scene_structure, request.prompt)
+        
+        # Create enhanced prompt for multi-reward generation
+        enhanced_prompt = f"""
+{llm_context}
+
+TASK: {request.prompt}
+
+Generate a complete Python policy package with 3 different reward approaches:
+
+1. **Dense Reward**: Continuous feedback for gradual learning
+2. **Sparse Reward**: Large rewards only upon task completion  
+3. **Shaped Reward**: Curriculum-style with intermediate milestones
+
+Return this JSON structure:
+{{
+    "task": "{request.prompt}",
+    "scene": "{scene_structure.name}",
+    "policy_code": "# Main policy neural network code",
+    "reward_functions": [
+        {{
+            "name": "dense_reward",
+            "description": "Continuous distance-based feedback",
+            "code": "def compute_reward(state, action): ..."
+        }},
+        {{
+            "name": "sparse_reward", 
+            "description": "Success/failure only",
+            "code": "def compute_reward(state, action): ..."
+        }},
+        {{
+            "name": "shaped_reward",
+            "description": "Milestone-based progression", 
+            "code": "def compute_reward(state, action): ..."
+        }}
+    ],
+    "observation_space": {scene_structure.nq + scene_structure.nv},
+    "action_space": {scene_structure.nu}
+}}
+"""
+        
+        # Generate policy using LLM
+        response_text = ""
+        async for chunk in inference_engine.generate_policy(enhanced_prompt, model=request.model):
+            response_text += chunk
+        
+        # Try to parse as JSON, fallback to text response
+        try:
+            import json
+            policy_data = json.loads(response_text)
+            return policy_data
+        except:
+            # Fallback if not valid JSON
+            return {
+                "task": request.prompt,
+                "scene": scene_structure.name,
+                "raw_response": response_text,
+                "scene_structure": {
+                    "joints": scene_structure.joints,
+                    "bodies": scene_structure.bodies,
+                    "sites": scene_structure.sites,
+                    "sensors": scene_structure.sensors,
+                    "action_dim": scene_structure.nu,
+                    "state_dim": scene_structure.nq + scene_structure.nv
+                }
+            }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Policy generation failed: {str(e)}")
 
 if __name__ == "__main__":
     print("🚀 Starting TabRL Backend...")
