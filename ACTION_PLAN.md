@@ -2,7 +2,7 @@
 
 ## Day 1: Infrastructure Setup ✓
 1. [x] Create project structure
-2. [ ] Run `./scripts/setup_scenes.sh` to get robot XMLs
+2. [x] Run `./scripts/setup_scenes.sh` to get robot XMLs
 3. [ ] Set up Modal account and get token
 4. [ ] Deploy hello world Modal function
 5. [ ] Test WebContainer boots and saves settings
