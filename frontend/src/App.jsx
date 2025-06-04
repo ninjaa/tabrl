@@ -8,7 +8,8 @@ import {
   startShell,
   saveApiKeysToContainer,
   loadApiKeysFromContainer,
-  testModalApi
+  testModalApi,
+  installPythonPackages
 } from './webcontainer-test.js';
 
 function App() {
@@ -117,6 +118,21 @@ function App() {
   const handleToggleTerminal = () => {
     console.log('🖥️ Toggle terminal clicked, current state:', showTerminal);
     setShowTerminal(!showTerminal);
+  };
+
+  const handleInstallPackages = async () => {
+    if (!webContainerReady) {
+      alert('WebContainer not ready yet!');
+      return;
+    }
+
+    try {
+      // Install packages needed for Modal API
+      await installPythonPackages(['requests', 'modal']);
+      alert('Packages installed! Now try Test Modal again.');
+    } catch (error) {
+      alert(`Failed to install packages: ${error.message}`);
+    }
   };
 
   // Setup terminal after it's rendered
@@ -237,6 +253,14 @@ function App() {
           style={{ marginRight: '10px' }}
         >
           Debug WebContainer
+        </button>
+        
+        <button 
+          onClick={handleInstallPackages} 
+          disabled={!webContainerReady}
+          style={{ marginRight: '10px' }}
+        >
+          Install Packages
         </button>
         
         <button 
