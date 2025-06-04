@@ -213,7 +213,7 @@ class SimplePPO:
         """Update policy using PPO"""
         
         if len(observations) < 2:
-            return 0.0
+            return {"mean_reward": 0.0, "policy_loss": 0.0, "value_loss": 0.0}
         
         # Convert to numpy arrays
         obs = np.array(observations)
@@ -223,6 +223,9 @@ class SimplePPO:
         # Compute returns
         returns = self._compute_returns(rews, dones)
         
+        policy_losses = []
+        value_losses = []
+        
         # Simple gradient update (not full PPO, but functional)
         for i in range(len(obs) - 1):
             # Policy gradient update
@@ -230,11 +233,23 @@ class SimplePPO:
             policy_grad = np.outer(acts[i] - self.predict(obs[i]), obs[i])
             self.policy_weights += self.learning_rate * advantage * policy_grad
             
+            # Track policy loss (negative advantage)
+            policy_loss = -abs(advantage)
+            policy_losses.append(policy_loss)
+            
             # Value function update
             value_error = returns[i] - self.predict_value(obs[i])
             self.value_weights += self.learning_rate * value_error * obs[i]
+            
+            # Track value loss (squared error)
+            value_loss = value_error ** 2
+            value_losses.append(value_loss)
         
-        return np.mean(returns)
+        return {
+            "mean_reward": np.mean(returns),
+            "policy_loss": np.mean(policy_losses),
+            "value_loss": np.mean(value_losses)
+        }
     
     def _compute_returns(self, rewards: np.ndarray, dones: List[bool]) -> np.ndarray:
         """Compute discounted returns"""
@@ -312,7 +327,10 @@ class RealTrainer:
                 
                 # Update agent
                 if len(observations) > 1:
-                    avg_return = agent.update(observations, actions, rewards, dones)
+                    update_result = agent.update(observations, actions, rewards, dones)
+                    current_loss = update_result.get("value_loss", 0.0)
+                else:
+                    current_loss = 0.0
                 
                 episode_rewards.append(episode_reward)
                 agent.episode_rewards.append(episode_reward)
@@ -321,11 +339,11 @@ class RealTrainer:
                 # Log progress
                 if episode % 10 == 0 or episode == episodes - 1:
                     avg_reward = np.mean(episode_rewards[-10:])
-                    print(f"Episode {episode}: Reward = {episode_reward:.2f}, Avg = {avg_reward:.2f}")
+                    print(f"Episode {episode}: Reward = {episode_reward:.2f}, Avg = {avg_reward:.2f}, Loss = {current_loss:.4f}")
                     
                     # Call progress callback
                     if progress_callback:
-                        await progress_callback(episode, episodes, episode_reward, avg_reward)
+                        await progress_callback(episode, episodes, episode_reward, avg_reward, current_loss)
                 
                 # Record training data
                 training_data.append({

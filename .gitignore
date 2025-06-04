@@ -1,3 +1,29 @@
 temp_menagerie
 *.pyc
 .env
+
+# Training artifacts
+backend/models/
+backend/training_videos/
+backend/__pycache__/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

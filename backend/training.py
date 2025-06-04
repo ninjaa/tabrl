@@ -104,7 +104,7 @@ class TrainingEngine:
         
         return training_id
     
-    async def _run_training(self, training_id: str, task_description: str, scene_name: str, reward_code: str):
+    async def _run_training(self, training_id: str, task_description: str, scene_name: str, reward_code: str = None):
         """Run the training process"""
         
         try:
@@ -135,11 +135,12 @@ class TrainingEngine:
             status.updated_at = time.time()
             
             async def progress_callback(episode: int, total_episodes: int, 
-                                      episode_reward: float, avg_reward: float):
+                                      episode_reward: float, avg_reward: float, loss: float = 0.0):
                 """Update training progress"""
                 status.episode = episode + 1
                 status.progress = episode / total_episodes
                 status.reward = avg_reward
+                status.loss = loss
                 status.eta_seconds = int((total_episodes - episode) * 5)  # 5 sec per episode
                 status.updated_at = time.time()
             
