@@ -116,6 +116,36 @@ class TestSceneParser:
         
         print(f"✅ Shadow Hand Scene: {len(structure.joints)} joints, {len(structure.actuators)} actuators")
     
+    def test_parse_humanoid_scene(self):
+        """Test parsing Unitree G1 humanoid robot"""
+        scene_path = "../scenes/locomotion/unitree_g1/scene.xml"
+        
+        structure = parse_scene_xml(scene_path)
+        
+        # Basic properties
+        assert structure.name == "g1_29dof_rev_1_0 scene"
+        assert len(structure.joints) == 29  # 29 DOF humanoid
+        assert len(structure.actuators) == 29
+        assert structure.nu == 29  # Action dimension
+        assert structure.nq == 29  # Position dimension  
+        assert structure.nv == 29  # Velocity dimension
+        
+        # Should have humanoid-related joints
+        humanoid_keywords = ['hip', 'knee', 'ankle', 'shoulder', 'elbow', 'wrist', 'waist']
+        humanoid_joints = [j for j in structure.joints 
+                          if any(keyword in j.lower() for keyword in humanoid_keywords)]
+        assert len(humanoid_joints) > 20, f"Not enough humanoid joints found: {len(humanoid_joints)}"
+        
+        # Should have left/right symmetry
+        left_joints = [j for j in structure.joints if 'left' in j.lower()]
+        right_joints = [j for j in structure.joints if 'right' in j.lower()]
+        assert len(left_joints) > 0, "No left-side joints found"
+        assert len(right_joints) > 0, "No right-side joints found"
+        assert len(left_joints) == len(right_joints), f"Asymmetric joint count: {len(left_joints)} left vs {len(right_joints)} right"
+        
+        print(f"✅ Unitree G1 Scene: {len(structure.joints)} joints, {len(structure.actuators)} actuators")
+        print(f"    Left/Right symmetry: {len(left_joints)} joints each side")
+    
     def test_xml_include_handling(self):
         """Test that XML includes are properly resolved"""
         scene_path = "../scenes/manipulation/universal_robots_ur5e/scene.xml"
@@ -221,6 +251,12 @@ class TestSceneParser:
                 "expected_min_state_dim": 24
             },
             {
+                "scene": "locomotion/unitree_g1",
+                "task": "Walk like a human with natural gait",
+                "expected_action_dim": 29,
+                "expected_min_state_dim": 58
+            },
+            {
                 "scene": "simple/shadow_hand",
                 "task": "Grasp a small object",
                 "expected_action_dim": 20,
@@ -269,6 +305,7 @@ def run_tests():
         ("Manipulation Scene (UR5e)", test_suite.test_parse_manipulation_scene),
         ("Locomotion Scene (ANYmal)", test_suite.test_parse_locomotion_scene), 
         ("Hand Scene (Shadow Hand)", test_suite.test_parse_hand_scene),
+        ("Humanoid Scene (Unitree G1)", test_suite.test_parse_humanoid_scene),
         ("XML Include Handling", test_suite.test_xml_include_handling),
         ("Actuator Detection", test_suite.test_actuator_detection),
         ("Fallback Parsing", test_suite.test_fallback_parsing),
