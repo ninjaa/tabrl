@@ -163,7 +163,7 @@ async def list_scenes():
             for scene_dir in category_dir.iterdir():
                 if scene_dir.is_dir():
                     # Try different XML file names
-                    xml_files = ["scene.xml", "robot.xml", "ur5e.xml"]
+                    xml_files = ["scene.xml", "robot.xml", "ur5e.xml", "scene_left.xml", "scene_right.xml"]
                     xml_file = None
                     for xml_name in xml_files:
                         if (scene_dir / xml_name).exists():
@@ -210,7 +210,7 @@ async def generate_policy(request: PolicyGenerationRequest):
         scene_path = scenes_dir / request.scene_name
         
         # Try different XML file names
-        xml_files = ["scene.xml", "robot.xml", "ur5e.xml"]
+        xml_files = ["scene.xml", "robot.xml", "ur5e.xml", "scene_left.xml", "scene_right.xml"]
         xml_file = None
         for xml_name in xml_files:
             if (scene_path / xml_name).exists():
