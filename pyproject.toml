@@ -1,0 +1,14 @@
+[project]
+name = "tabrl"
+version = "0.1.0"
+description = "Train Robots in Your Browser Tab"
+requires-python = ">=3.8"
+
+dependencies = [
+    "modal",
+    "fastapi[standard]",
+]
+
+[tool.uv.sources]
+# You can specify alternative package indexes here if needed
+# e.g., my-index = { url = "https://my-index.com/simple" }
