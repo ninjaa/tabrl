@@ -1,14 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { testWebContainer, testSettings } from './webcontainer-test';
+import React, { useState, useEffect, useRef } from 'react';
+import './App.css';
+import { 
+  testWebContainer, 
+  getWebContainerURL, 
+  debugWebContainer,
+  setupTerminal,
+  startShell,
+  saveApiKeysToContainer,
+  loadApiKeysFromContainer,
+  testModalApi
+} from './webcontainer-test.js';
 
 function App() {
-  const [status, setStatus] = useState('Initializing...');
+  const [status, setStatus] = useState('Starting...');
   const [webContainerReady, setWebContainerReady] = useState(false);
-  const [keys, setKeys] = useState({
+  const [apiKeys, setApiKeys] = useState({
     anthropic_api_key: '',
     modal_token_id: '',
     modal_token_secret: ''
   });
+  const [showTerminal, setShowTerminal] = useState(false);
+  const terminalRef = useRef(null);
   
   useEffect(() => {
     // Boot WebContainer without keys initially
@@ -19,88 +31,231 @@ function App() {
       setStatus(`WebContainer failed: ${err.message}`);
     });
   }, []);
-  
+
+  const getURL = () => {
+    const url = getWebContainerURL();
+    if (!url) {
+      throw new Error('WebContainer URL not available yet. Please wait a moment.');
+    }
+    return url;
+  };
+
   const handleSaveKeys = async () => {
+    if (!webContainerReady) {
+      alert('WebContainer not ready yet!');
+      return;
+    }
+
     try {
-      const response = await fetch('http://localhost:3000/settings/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(keys)
-      });
-      const result = await response.json();
-      setStatus(`Keys saved securely in WebContainer! Keys: ${result.keys_stored?.join(', ')}`);
-    } catch (err) {
-      setStatus(`Failed to save keys: ${err.message}`);
+      await saveApiKeysToContainer(apiKeys);
+      alert('Keys saved!');
+    } catch (error) {
+      alert(`Failed to save keys: ${error.message}`);
     }
   };
-  
+
+  const handleTestModal = async () => {
+    if (!webContainerReady) {
+      alert('WebContainer not ready yet!');
+      return;
+    }
+
+    try {
+      const result = await testModalApi();
+      alert(`Modal test result: ${JSON.stringify(result, null, 2)}`);
+    } catch (error) {
+      alert(`Modal test failed: ${error.message}`);
+    }
+  };
+
+  const handleLoadSettings = async () => {
+    if (!webContainerReady) {
+      alert('WebContainer not ready yet!');
+      return;
+    }
+
+    try {
+      const result = await loadApiKeysFromContainer();
+      alert(`Settings: ${JSON.stringify(result, null, 2)}`);
+    } catch (error) {
+      alert(`Failed to load settings: ${error.message}`);
+    }
+  };
+
+  const handleCORSTest = async () => {
+    if (!webContainerReady) {
+      alert('WebContainer not ready yet!');
+      return;
+    }
+
+    try {
+      const webContainerURL = getURL();
+      console.log('Testing CORS with URL:', webContainerURL);
+      const response = await fetch(`${webContainerURL}/cors-test`);
+      const result = await response.json();
+      alert(`CORS Test Success: ${JSON.stringify(result, null, 2)}`);
+    } catch (error) {
+      alert(`CORS Test Failed: ${error.message}`);
+      console.error('CORS Error:', error);
+    }
+  };
+
+  const handleDebug = async () => {
+    if (!webContainerReady) {
+      alert('WebContainer not ready yet!');
+      return;
+    }
+
+    try {
+      await debugWebContainer();
+      alert('Debugging WebContainer...');
+    } catch (error) {
+      alert(`Failed to debug WebContainer: ${error.message}`);
+    }
+  };
+
+  const handleToggleTerminal = () => {
+    console.log('🖥️ Toggle terminal clicked, current state:', showTerminal);
+    setShowTerminal(!showTerminal);
+  };
+
+  // Setup terminal after it's rendered
+  useEffect(() => {
+    if (showTerminal && terminalRef.current) {
+      console.log('🖥️ Terminal div rendered, setting up terminal...');
+      console.log('🖥️ Terminal ref element:', terminalRef.current);
+      
+      // Small delay to ensure DOM is fully ready
+      setTimeout(async () => {
+        try {
+          console.log('🖥️ Calling setupTerminal...');
+          const terminalInstance = setupTerminal(terminalRef.current);
+          
+          if (!terminalInstance) {
+            console.error('❌ setupTerminal returned null');
+            return;
+          }
+          
+          console.log('🖥️ Terminal setup successful, starting shell...');
+          const shell = await startShell();
+          
+          if (!shell) {
+            console.error('❌ startShell returned null');
+            return;
+          }
+          
+          console.log('✅ Terminal ready for use');
+        } catch (error) {
+          console.error('❌ Failed to setup terminal:', error);
+        }
+      }, 100);
+    }
+  }, [showTerminal]); // Run when showTerminal changes
+
   return (
-    <div style={{ padding: '20px', fontFamily: 'monospace' }}>
-      <h1>TabRL - Setup Test</h1>
+    <div className="App">
+      <h1>TabRL WebContainer Test</h1>
       <p>Status: {status}</p>
       
-      <h2>Configure API Keys</h2>
-      <div style={{ marginBottom: '10px' }}>
-        <input 
-          placeholder="Anthropic API Key (sk-ant-...)"
-          value={keys.anthropic_api_key}
-          onChange={(e) => setKeys({...keys, anthropic_api_key: e.target.value})}
-          style={{ width: '400px', marginRight: '10px' }}
-          type="password"
-        />
+      <div style={{ margin: '20px 0' }}>
+        <h3>API Keys Configuration</h3>
+        
+        <div style={{ marginBottom: '10px' }}>
+          <label>
+            Anthropic API Key:
+            <input
+              type="password"
+              value={apiKeys.anthropic_api_key}
+              onChange={(e) => setApiKeys({...apiKeys, anthropic_api_key: e.target.value})}
+              placeholder="sk-ant-..."
+              style={{ marginLeft: '10px', width: '300px' }}
+            />
+          </label>
+        </div>
+
+        <div style={{ marginBottom: '10px' }}>
+          <label>
+            Modal Token ID:
+            <input
+              type="password"
+              value={apiKeys.modal_token_id}
+              onChange={(e) => setApiKeys({...apiKeys, modal_token_id: e.target.value})}
+              placeholder="ak-..."
+              style={{ marginLeft: '10px', width: '300px' }}
+            />
+          </label>
+        </div>
+
+        <div style={{ marginBottom: '20px' }}>
+          <label>
+            Modal Token Secret:
+            <input
+              type="password"
+              value={apiKeys.modal_token_secret}
+              onChange={(e) => setApiKeys({...apiKeys, modal_token_secret: e.target.value})}
+              placeholder="as-..."
+              style={{ marginLeft: '10px', width: '300px' }}
+            />
+          </label>
+        </div>
+
+        <button 
+          onClick={handleSaveKeys} 
+          disabled={!webContainerReady}
+          style={{ marginRight: '10px' }}
+        >
+          Save Keys to WebContainer
+        </button>
+        
+        <button 
+          onClick={handleTestModal} 
+          disabled={!webContainerReady}
+          style={{ marginRight: '10px' }}
+        >
+          Test Modal Connection
+        </button>
+        
+        <button 
+          onClick={handleLoadSettings} 
+          disabled={!webContainerReady}
+          style={{ marginRight: '10px' }}
+        >
+          Load Settings
+        </button>
+        
+        <button 
+          onClick={handleCORSTest} 
+          disabled={!webContainerReady}
+          style={{ marginRight: '10px' }}
+        >
+          Test CORS
+        </button>
+        
+        <button 
+          onClick={handleDebug} 
+          disabled={!webContainerReady}
+          style={{ marginRight: '10px' }}
+        >
+          Debug WebContainer
+        </button>
+        
+        <button 
+          onClick={handleToggleTerminal} 
+          disabled={!webContainerReady}
+        >
+          Toggle Terminal
+        </button>
       </div>
-      <div style={{ marginBottom: '10px' }}>
-        <input 
-          placeholder="Modal Token ID (ak-...)"  
-          value={keys.modal_token_id}
-          onChange={(e) => setKeys({...keys, modal_token_id: e.target.value})}
-          style={{ width: '400px', marginRight: '10px' }}
-          type="password"
-        />
-      </div>
-      <div style={{ marginBottom: '10px' }}>
-        <input 
-          placeholder="Modal Token Secret (as-...)"  
-          value={keys.modal_token_secret}
-          onChange={(e) => setKeys({...keys, modal_token_secret: e.target.value})}
-          style={{ width: '400px', marginRight: '10px' }}
-          type="password"
-        />
-      </div>
-      <button onClick={handleSaveKeys} disabled={!webContainerReady}>
-        Save Keys Securely in WebContainer
-      </button>
-      
-      {webContainerReady && (
-        <>
-          <h2>Test Modal Connection</h2>
-          <button onClick={async () => {
-            const resp = await fetch('http://localhost:3000/test/modal', {
-              method: 'POST'
-            });
-            const data = await resp.json();
-            setStatus(`Modal test: ${JSON.stringify(data)}`);
-          }}>Test Modal</button>
-          
-          <h2>WebContainer Status</h2>
-          <button onClick={async () => {
-            const resp = await fetch('http://localhost:3000/settings/load');
-            const data = await resp.json();
-            setStatus(`Keys in WebContainer: ${JSON.stringify(data)}`);
-          }}>Check Stored Keys</button>
-        </>
+      {showTerminal && (
+        <div ref={terminalRef} style={{ 
+          width: '100%', 
+          height: '300px', 
+          border: '1px solid black',
+          textAlign: 'left'
+        }} />
       )}
-      
-      <h2>Setup Progress</h2>
-      <ul>
-        <li>✓ WebContainer boots</li>
-        <li>◯ API keys stored securely in WebContainer</li>
-        <li>◯ Modal connection test</li>
-        <li>◯ Load MuJoCo scene</li>
-        <li>◯ Run ONNX inference</li>
-      </ul>
     </div>
-  );
+  )
 }
 
-export default App;
+export default App
