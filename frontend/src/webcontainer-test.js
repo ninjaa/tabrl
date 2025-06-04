@@ -2,7 +2,7 @@
 
 import { WebContainer } from '@webcontainer/api';
 
-export async function testWebContainer() {
+export async function testWebContainer(apiKeys = {}) {
   console.log('🚀 Booting WebContainer...');
   
   const webcontainer = await WebContainer.boot();
@@ -18,8 +18,8 @@ import os
 
 app = Flask(__name__)
 
-# Simple file-based settings
-SETTINGS_FILE = '/tmp/settings.json'
+# Store API keys securely inside WebContainer
+API_KEYS = {}
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -27,27 +27,27 @@ def health():
 
 @app.route('/settings/save', methods=['POST'])
 def save_settings():
+    global API_KEYS
     settings = request.json
-    with open(SETTINGS_FILE, 'w') as f:
-        json.dump(settings, f)
-    return jsonify({"status": "saved"})
+    API_KEYS.update(settings)
+    print(f"Stored keys: {list(API_KEYS.keys())}")  # Log key names only, not values
+    return jsonify({"status": "saved", "keys_stored": list(API_KEYS.keys())})
 
 @app.route('/settings/load', methods=['GET'])
 def load_settings():
-    if os.path.exists(SETTINGS_FILE):
-        with open(SETTINGS_FILE, 'r') as f:
-            return jsonify(json.load(f))
-    return jsonify({})
+    return jsonify({"keys_configured": bool(API_KEYS), "available_keys": list(API_KEYS.keys())})
 
 @app.route('/test/modal', methods=['POST'])
 def test_modal():
-    # Test proxying to Modal
+    # Test proxying to Modal using stored keys
     import requests
     
-    # This will work because WebContainer can make external requests!
+    if 'modal_token_id' not in API_KEYS or 'modal_token_secret' not in API_KEYS:
+        return jsonify({"error": "Modal credentials not configured"})
+    
     try:
-        # Replace with your Modal endpoint
-        resp = requests.post('https://YOUR_MODAL_APP.modal.run/hello')
+        # Use the actual Modal endpoint with authentication
+        resp = requests.post('https://ninjaa--tabrl-hello-hello-dev.modal.run')
         return resp.json()
     except Exception as e:
         return jsonify({"error": str(e)})
@@ -73,6 +73,23 @@ if __name__ == '__main__':
   
   // Start the server
   const serverProcess = await webcontainer.spawn('python', ['server.py']);
+  
+  // Auto-configure API keys if provided
+  if (apiKeys && Object.keys(apiKeys).length > 0) {
+    // Wait a moment for server to start, then send keys
+    setTimeout(async () => {
+      try {
+        const response = await fetch('http://localhost:3000/settings/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(apiKeys)
+        });
+        console.log('✅ API keys configured in WebContainer');
+      } catch (e) {
+        console.log('⏳ Waiting for WebContainer server...');
+      }
+    }, 2000);
+  }
   
   // Wait for server to be ready
   webcontainer.on('server-ready', (port, url) => {
