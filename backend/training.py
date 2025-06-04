@@ -9,6 +9,8 @@ import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict
+from scene_parser import parse_scene_xml
+from rl_training import RealTrainer
 
 @dataclass
 class TrainingStatus:
@@ -33,12 +35,13 @@ class TrainingEngine:
         self.active_trainings: Dict[str, TrainingStatus] = {}
         self.models_dir = Path("models")
         self.models_dir.mkdir(exist_ok=True)
+        self.real_trainer = RealTrainer()
     
     def start_training(
         self, 
         task_description: str, 
-        robot_xml: str, 
-        episodes: int = 1000
+        scene_name: str,
+        episodes: int = 100
     ) -> str:
         """Start a new training job"""
         
@@ -47,13 +50,13 @@ class TrainingEngine:
         # Initialize training status
         status = TrainingStatus(
             id=training_id,
-            status="running",
+            status="initializing",
             progress=0.0,
             episode=0,
             total_episodes=episodes,
             reward=0.0,
             loss=None,
-            eta_seconds=episodes * 3,  # Rough estimate: 3 seconds per episode
+            eta_seconds=episodes * 5,  # Estimate: 5 seconds per episode for real training
             model_path=None,
             error=None,
             created_at=time.time(),
@@ -63,87 +66,147 @@ class TrainingEngine:
         self.active_trainings[training_id] = status
         
         # Start training in background
-        asyncio.create_task(self._run_training(training_id, task_description, robot_xml))
+        asyncio.create_task(self._run_training(training_id, task_description, scene_name))
         
         return training_id
     
-    async def _run_training(self, training_id: str, task_description: str, robot_xml: str):
-        """Run the actual training process (mock implementation for now)"""
+    def start_training_with_reward_code(
+        self, 
+        task_description: str, 
+        scene_name: str,
+        reward_code: str,
+        episodes: int = 100
+    ) -> str:
+        """Start a new training job with provided reward function code"""
         
-        status = self.active_trainings[training_id]
+        training_id = str(uuid.uuid4())[:8]
+        
+        # Initialize training status
+        status = TrainingStatus(
+            id=training_id,
+            status="initializing",
+            progress=0.0,
+            episode=0,
+            total_episodes=episodes,
+            reward=0.0,
+            loss=None,
+            eta_seconds=episodes * 5,  # Estimate: 5 seconds per episode for real training
+            model_path=None,
+            error=None,
+            created_at=time.time(),
+            updated_at=time.time()
+        )
+        
+        self.active_trainings[training_id] = status
+        
+        # Start training in background with reward code
+        asyncio.create_task(self._run_training(training_id, task_description, scene_name, reward_code))
+        
+        return training_id
+    
+    async def _run_training(self, training_id: str, task_description: str, scene_name: str, reward_code: str):
+        """Run the training process"""
         
         try:
-            # Mock training loop
-            for episode in range(status.total_episodes):
-                
-                # Simulate training step
-                await asyncio.sleep(0.1)  # Simulate computation time
-                
-                # Update progress
-                status.episode = episode + 1
-                status.progress = episode / status.total_episodes
-                status.reward = self._mock_reward_curve(episode, status.total_episodes)
-                status.loss = max(0.1, 1.0 - (episode / status.total_episodes) * 0.9)
-                status.eta_seconds = int((status.total_episodes - episode) * 0.1)
-                status.updated_at = time.time()
-                
-                # Log progress every 100 episodes
-                if episode % 100 == 0:
-                    print(f"🏋️ Training {training_id}: Episode {episode}/{status.total_episodes}, Reward: {status.reward:.2f}")
+            status = self.active_trainings[training_id]
             
-            # Training completed - export model
-            model_path = await self._export_model(training_id, task_description)
+            # Update status to parsing scene
+            status.status = "parsing_scene"
+            status.updated_at = time.time()
+            
+            # Parse scene to get XML path
+            scene_xml_path = f"../scenes/{scene_name}/scene.xml"
+            
+            # Check for alternative XML files
+            scene_dir = Path(f"../scenes/{scene_name}")
+            xml_files = ["scene.xml", "robot.xml", "ur5e.xml", "scene_left.xml", "scene_right.xml"]
+            for xml_name in xml_files:
+                if (scene_dir / xml_name).exists():
+                    scene_xml_path = str(scene_dir / xml_name)
+                    break
+            
+            if not Path(scene_xml_path).exists():
+                raise Exception(f"Scene XML not found: {scene_xml_path}")
+            
+            print(f"🎯 Using scene: {scene_xml_path}")
+            
+            # Update status to training
+            status.status = "training"
+            status.updated_at = time.time()
+            
+            async def progress_callback(episode: int, total_episodes: int, 
+                                      episode_reward: float, avg_reward: float):
+                """Update training progress"""
+                status.episode = episode + 1
+                status.progress = episode / total_episodes
+                status.reward = avg_reward
+                status.eta_seconds = int((total_episodes - episode) * 5)  # 5 sec per episode
+                status.updated_at = time.time()
+            
+            # Train the policy
+            training_results = await self.real_trainer.train_policy(
+                scene_xml_path=scene_xml_path,
+                reward_function_code=reward_code,
+                training_id=training_id,
+                task_description=task_description,
+                episodes=status.total_episodes,
+                progress_callback=progress_callback
+            )
+            
+            if not training_results.get("success", False):
+                raise Exception(f"Training failed: {training_results.get('error', 'Unknown error')}")
+            
+            # Update status to exporting model
+            status.status = "exporting_model"
+            status.updated_at = time.time()
+            
+            # Export model and finalize
+            model_path = await self._export_model(training_id, task_description, training_results)
             
             status.status = "completed"
             status.progress = 1.0
             status.model_path = model_path
+            status.reward = training_results.get("final_avg_reward", 0.0)
             status.eta_seconds = 0
             status.updated_at = time.time()
             
-            print(f"✅ Training {training_id} completed! Model saved to {model_path}")
-            
+            print(f"✅ Training {training_id} completed! Final reward: {status.reward:.2f}")
+            print(f"📁 Model saved to: {model_path}")
+            if training_results.get("video_path"):
+                print(f"🎬 Training video: {training_results['video_path']}")
+        
         except Exception as e:
             status.status = "failed"
             status.error = str(e)
             status.updated_at = time.time()
             print(f"❌ Training {training_id} failed: {e}")
     
-    def _mock_reward_curve(self, episode: int, total_episodes: int) -> float:
-        """Generate a realistic reward curve for demo purposes"""
-        # Exponential learning curve with noise
-        progress = episode / total_episodes
-        base_reward = 1.0 - 0.8 * (0.95 ** episode)  # Exponential approach to 1.0
-        noise = 0.1 * (0.5 - hash(episode) % 100 / 100)  # Some randomness
-        return max(0.0, base_reward + noise)
-    
-    async def _export_model(self, training_id: str, task_description: str) -> str:
-        """Export trained model to ONNX format"""
+    async def _export_model(self, training_id: str, task_description: str, 
+                           training_results: Dict) -> str:
+        """Export trained model and metadata"""
         
         # Clean task description for filename
         safe_name = "".join(c for c in task_description if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_name = safe_name.replace(' ', '_')[:50]  # Limit length
         
-        model_filename = f"{training_id}_{safe_name}.onnx"
+        model_filename = f"{training_id}_{safe_name}_policy.json"
         model_path = self.models_dir / model_filename
         
-        # Mock ONNX export (in real implementation, this would save actual trained model)
-        await asyncio.sleep(1)  # Simulate export time
-        
-        # Create a placeholder ONNX file
-        model_path.write_bytes(b"MOCK_ONNX_MODEL_DATA")
-        
-        # Save metadata
-        metadata = {
+        # Save model metadata and training results
+        model_data = {
             "training_id": training_id,
             "task_description": task_description,
             "created_at": time.time(),
             "model_type": "RL_Policy",
-            "framework": "TabRL"
+            "framework": "TabRL",
+            "training_results": training_results,
+            "final_reward": training_results.get("final_avg_reward", 0.0),
+            "total_episodes": training_results.get("total_episodes", 0),
+            "model_info": training_results.get("model_info", {}),
+            "video_path": training_results.get("video_path")
         }
         
-        metadata_path = model_path.with_suffix('.json')
-        metadata_path.write_text(json.dumps(metadata, indent=2))
-        
+        model_path.write_text(json.dumps(model_data, indent=2))
         return str(model_path)
     
     def get_status(self, training_id: str) -> Dict[str, Any]:

@@ -52,8 +52,9 @@ class InferenceRequest(BaseModel):
 
 class TrainingRequest(BaseModel):
     task_description: str
-    robot_xml: str
-    episodes: int = 1000
+    scene_name: str  # e.g., "manipulation/universal_robots_ur5e"
+    episodes: int = 100
+    reward_code: str
 
 class ModelSelectionRequest(BaseModel):
     model: str
@@ -95,16 +96,17 @@ async def inference_endpoint(request: InferenceRequest):
 async def start_training(request: TrainingRequest):
     """Start training a new policy"""
     try:
-        training_id = training_engine.start_training(
+        training_id = training_engine.start_training_with_reward_code(
             task_description=request.task_description,
-            robot_xml=request.robot_xml,
-            episodes=request.episodes
+            scene_name=request.scene_name,
+            episodes=request.episodes,
+            reward_code=request.reward_code
         )
         
         return {
             "status": "started",
             "training_id": training_id,
-            "estimated_duration": "3-5 minutes"
+            "estimated_duration": f"{request.episodes * 5} seconds"
         }
         
     except Exception as e:
@@ -228,42 +230,43 @@ async def generate_policy(request: PolicyGenerationRequest):
         
         # Create enhanced prompt for multi-reward generation
         enhanced_prompt = f"""
+Design a set of reward functions that encourage the robot to learn a policy that successfully completes the task: {request.prompt}. 
+Consider the scene structure, the task requirements, and the robot's capabilities when designing the rewards. 
+The reward functions should be diverse and encourage exploration, yet still guide the robot towards the task goal.
+
+Scene context:
 {llm_context}
 
-TASK: {request.prompt}
-
-Generate a complete Python policy package with 3 different reward approaches:
-
-1. **Dense Reward**: Continuous feedback for gradual learning
-2. **Sparse Reward**: Large rewards only upon task completion  
-3. **Shaped Reward**: Curriculum-style with intermediate milestones
+Example reward structure:
+{{
+    "reward_functions": [
+        {{
+            "name": "distance_to_goal",
+            "type": "sparse",
+            "reward": "-0.1 * distance_to_goal"
+        }},
+        {{
+            "name": "joint_limit_penalty",
+            "type": "dense",
+            "reward": "-0.01 * (joint_limit_penalty)"
+        }},
+        {{
+            "name": "task_completion",
+            "type": "sparse",
+            "reward": "1.0 * (task_completion)"
+        }}
+    ]
+}}
 
 Return this JSON structure:
 {{
     "task": "{request.prompt}",
     "scene": "{scene_structure.name}",
     "policy_code": "# Main policy neural network code",
-    "reward_functions": [
-        {{
-            "name": "dense_reward",
-            "description": "Continuous distance-based feedback",
-            "code": "def compute_reward(state, action): ..."
-        }},
-        {{
-            "name": "sparse_reward", 
-            "description": "Success/failure only",
-            "code": "def compute_reward(state, action): ..."
-        }},
-        {{
-            "name": "shaped_reward",
-            "description": "Milestone-based progression", 
-            "code": "def compute_reward(state, action): ..."
-        }}
-    ],
+    "reward_functions": [...],
     "observation_space": {scene_structure.nq + scene_structure.nv},
     "action_space": {scene_structure.nu}
-}}
-"""
+}}"""
         
         # Generate policy using LLM
         response_text = ""

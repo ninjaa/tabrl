@@ -5,7 +5,7 @@ description = "Train Robots in Your Browser Tab"
 requires-python = ">=3.12"
 
 dependencies = [
-    "modal", 
+    "modal",
     "fastapi[standard]",
     # AI/ML Dependencies
     "litellm",
@@ -15,6 +15,7 @@ dependencies = [
     "pydantic",
     # Development
     "python-dotenv",
+    "mujoco>=3.3.2",
 ]
 
 [tool.uv.sources]
