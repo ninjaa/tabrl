@@ -218,6 +218,257 @@
 }
 
 /* Training Panel Styles */
+.training-step {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 12px var(--shadow-color);
+}
+
+.training-step h3 {
+  margin: 0 0 1.5rem 0;
+  color: var(--accent-primary);
+  font-size: 1.4rem;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.primary-button {
+  background: linear-gradient(45deg, var(--accent-primary), var(--accent-secondary));
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  width: auto;
+  min-width: 200px;
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #95a5a6;
+}
+
+/* Reward Approach Cards */
+.reward-approaches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.reward-card {
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1.5rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.reward-card:hover {
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px var(--shadow-color);
+}
+
+.reward-card.selected {
+  border-color: var(--accent-primary);
+  background: rgba(52, 152, 219, 0.1);
+  box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.3);
+}
+
+.reward-card h4 {
+  margin: 0 0 0.5rem 0;
+  color: var(--text-primary);
+}
+
+.reward-type {
+  font-size: 0.9rem;
+  color: var(--accent-primary);
+  font-weight: 600;
+  text-transform: uppercase;
+  margin: 0 0 1rem 0;
+}
+
+.reward-description {
+  color: var(--text-secondary);
+  margin: 0 0 1rem 0;
+  line-height: 1.5;
+}
+
+.reward-code {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 1rem;
+  font-size: 0.85rem;
+  overflow-x: auto;
+  margin-top: 0.5rem;
+}
+
+/* Training Progress */
+.training-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.training-job {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.job-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.job-header h4 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.status {
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status.started,
+.status.initializing {
+  background: #f39c12;
+  color: white;
+}
+
+.status.training {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.status.completed {
+  background: #27ae60;
+  color: white;
+}
+
+.status.failed {
+  background: #e74c3c;
+  color: white;
+}
+
+.job-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.job-details p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+/* Progress Bar */
+.progress-section {
+  margin-top: 1.5rem;
+}
+
+.progress-bar {
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  height: 20px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border-color);
+}
+
+.progress-fill {
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+  height: 100%;
+  transition: width 0.3s ease;
+  border-radius: 10px;
+}
+
+.progress-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.progress-stats span {
+  background: var(--bg-secondary);
+  padding: 0.5rem;
+  border-radius: 4px;
+  text-align: center;
+  border: 1px solid var(--border-color);
+}
+
+/* Completion and Error Sections */
+.completion-section,
+.error-section {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 6px;
+}
+
+.completion-section {
+  background: rgba(39, 174, 96, 0.1);
+  border: 1px solid #27ae60;
+}
+
+.error-section {
+  background: rgba(231, 76, 60, 0.1);
+  border: 1px solid #e74c3c;
+}
+
+.completion-section p,
+.error-section p {
+  margin: 0.5rem 0;
+}
+
 .training-controls {
   display: flex;
   flex-direction: column;
