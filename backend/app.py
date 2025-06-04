@@ -41,19 +41,15 @@ training_engine = TrainingEngine()
 # Request/Response Models
 class InferenceRequest(BaseModel):
     prompt: str
-    model_path: Optional[str] = None
+    model: Optional[str] = None  # Allow model override per request
 
 class TrainingRequest(BaseModel):
     task_description: str
     robot_xml: str
     episodes: int = 1000
-    
-class ApiKeyRequest(BaseModel):
-    anthropic_key: Optional[str] = None
-    openai_key: Optional[str] = None
 
-# API Keys storage (in-memory for now)
-api_keys = {}
+class ModelSelectionRequest(BaseModel):
+    model: str
 
 @app.get("/")
 async def root():
@@ -64,32 +60,13 @@ async def root():
         "version": "1.0.0"
     }
 
-@app.post("/api/keys")
-async def set_api_keys(keys: ApiKeyRequest):
-    """Store API keys for LLM services"""
-    global api_keys
-    
-    if keys.anthropic_key:
-        api_keys["anthropic"] = keys.anthropic_key
-        os.environ["ANTHROPIC_API_KEY"] = keys.anthropic_key
-        
-    if keys.openai_key:
-        api_keys["openai"] = keys.openai_key
-        os.environ["OPENAI_API_KEY"] = keys.openai_key
-    
-    return {"status": "success", "keys_updated": list(keys.dict(exclude_unset=True).keys())}
-
 @app.post("/api/inference")
 async def inference_endpoint(request: InferenceRequest):
     """Generate policy code from natural language"""
     try:
-        # Check if we have required API keys
-        if "anthropic" not in api_keys and "openai" not in api_keys:
-            raise HTTPException(status_code=400, detail="No API keys configured")
-        
         # Generate streaming response
         async def generate_response():
-            async for chunk in inference_engine.generate_policy(request.prompt):
+            async for chunk in inference_engine.generate_policy(request.prompt, model=request.model):
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
         
@@ -148,6 +125,14 @@ async def list_models():
     
     return {"models": models}
 
+@app.get("/api/models/llm")
+async def get_available_llm_models():
+    """Get available LLM models"""
+    return {
+        "models": inference_engine.get_available_models(),
+        "current": inference_engine.get_current_model()
+    }
+
 @app.get("/api/scenes")
 async def list_scenes():
     """List available robot scenes"""
@@ -167,6 +152,23 @@ async def list_scenes():
                 })
     
     return {"scenes": scenes}
+
+@app.post("/api/model/select")
+async def select_model(request: ModelSelectionRequest):
+    """Select a model for inference"""
+    success = inference_engine.set_model(request.model)
+    if success:
+        return {"status": "success", "model": request.model}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid model name")
+
+@app.get("/api/model/current")
+async def get_current_model():
+    """Get currently selected model"""
+    return {
+        "model": inference_engine.get_current_model(),
+        "info": inference_engine.get_available_models().get(inference_engine.get_current_model(), {})
+    }
 
 if __name__ == "__main__":
     print("🚀 Starting TabRL Backend...")

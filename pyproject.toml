@@ -7,9 +7,8 @@ requires-python = ">=3.12"
 dependencies = [
     "modal", 
     "fastapi[standard]",
-    # AI/ML Dependencies (optional installs)
-    "anthropic",
-    "openai", 
+    # AI/ML Dependencies
+    "litellm",
     "numpy>=2.0.0",
     "onnxruntime>=1.18.0",
     # Data Processing
