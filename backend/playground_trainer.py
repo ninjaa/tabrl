@@ -14,7 +14,7 @@ class PlaygroundTrainer:
     def __init__(self):
         """Initialize Modal client"""
         try:
-            # Connect to the deployed app using new Modal API
+            # Connect to the Modal app using correct API
             self.train_fn = modal.Function.from_name("tabrl-playground-training", "train_playground_locomotion")
             self.list_models_fn = modal.Function.from_name("tabrl-playground-training", "list_trained_models")
             self.get_model_info_fn = modal.Function.from_name("tabrl-playground-training", "get_model_info")

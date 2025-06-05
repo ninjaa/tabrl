@@ -73,7 +73,6 @@ def train_playground_locomotion(
     import pickle
     
     from mujoco_playground import registry
-    from mujoco_playground._src import locomotion_params, wrapper
     from brax.training.agents.ppo import networks as ppo_networks
     from brax.training.agents import ppo
     
@@ -85,17 +84,19 @@ def train_playground_locomotion(
     env = registry_obj.load(env_name)
     env_cfg = registry_obj.get_default_config(env_name)
     
-    # Get PPO params (locomotion has specific configs, others use default)
-    if category == "locomotion":
-        ppo_params = locomotion_params.brax_ppo_config(env_name)
+    # Get PPO params - use env_cfg directly instead of locomotion_params
+    if hasattr(env_cfg, 'training') and hasattr(env_cfg.training, 'ppo'):
+        # Use config from environment
+        ppo_params = env_cfg.training.ppo
+        episode_length = env_cfg.episode_length if hasattr(env_cfg, 'episode_length') else 1000
     else:
-        # Default PPO config for manipulation/dm_control_suite
+        # Use default PPO config
         ppo_params = {
-            'num_timesteps': 30_000_000,
-            'num_envs': 2048,
-            'num_eval_envs': 128,
-            'reward_scaling': 1.0,
+            'num_timesteps': training_steps,
+            'num_evals': eval_episodes,
+            'reward_scaling': 1,
             'episode_length': 1000,
+            'normalize_observations': True,
             'action_repeat': 1,
             'unroll_length': 5,
             'num_minibatches': 32,
@@ -103,11 +104,13 @@ def train_playground_locomotion(
             'discounting': 0.97,
             'learning_rate': 3e-4,
             'entropy_cost': 1e-2,
-            'max_grad_norm': 0.5,
+            'num_envs': 512,
+            'batch_size': 256,
         }
+        episode_length = 1000
     
     print(f"Environment: {category}/{env_name}")
-    print(f"Episode length: {env_cfg.episode_length}")
+    print(f"Episode length: {episode_length}")
     print(f"Action dim: {env.action_size}")
     
     # Sample environment to check structure
@@ -138,10 +141,7 @@ def train_playground_locomotion(
               f"Time: {elapsed:.1f}s")
     
     # Setup training
-    if category == "locomotion":
-        randomizer = registry_obj.get_domain_randomizer(env_name)
-    else:
-        randomizer = None  # Other categories may not have domain randomizers
+    randomizer = None  # Other categories may not have domain randomizers
         
     ppo_training_params = dict(ppo_params)
     network_factory = ppo_networks.make_ppo_networks
@@ -170,7 +170,7 @@ def train_playground_locomotion(
     make_inference_fn, params, metrics = train_fn(
         environment=env,
         eval_env=registry_obj.load(env_name, config=env_cfg),
-        wrap_env_fn=wrapper.wrap_for_brax_training,
+        wrap_env_fn=None,
     )
     
     training_time = (datetime.now() - start_time).total_seconds()
@@ -190,22 +190,22 @@ def train_playground_locomotion(
         rng = jax.random.PRNGKey(episode + 42)
         state = jit_reset(rng)
         episode_reward = 0.0
-        episode_length = 0
+        episode_step_count = 0
         
-        for step in range(env_cfg.episode_length):
+        for step in range(episode_length):
             act_rng, rng = jax.random.split(rng)
             action, _ = jit_inference_fn(state.obs, act_rng)
             state = jit_step(state, action)
             
             episode_reward += state.reward
-            episode_length += 1
+            episode_step_count += 1
             
             if state.done:
                 break
         
         eval_rewards.append(float(episode_reward))
-        eval_lengths.append(episode_length)
-        print(f"  Episode {episode+1}: Reward={episode_reward:.2f}, Length={episode_length}")
+        eval_lengths.append(episode_step_count)
+        print(f"Eval episode {episode + 1}: {episode_reward:.2f} reward, {episode_step_count} steps")
     
     avg_reward = np.mean(eval_rewards)
     avg_length = np.mean(eval_lengths)

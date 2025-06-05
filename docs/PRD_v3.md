@@ -206,6 +206,274 @@ def train_locomotion_policy(scene_name, reward_code, config):
    - Real-time simulation preview
    - Model comparison and analysis
 
+## MuJoCo Playground Bridge Architecture
+
+### The Critical Connection
+
+**BREAKTHROUGH**: We can extract complete MuJoCo XML scenes from Playground environments and load them directly in the frontend MuJoCo WASM viewer.
+
+```python
+# Backend: Extract any Playground environment as XML
+env = registry.locomotion.load("Go1JoystickFlatTerrain")
+complete_xml = env.sys.to_xml()  # Full scene: robot + terrain + physics
+
+# Frontend: Load directly in browser
+mujoco.Model.load_from_xml(complete_xml)
+# Result: User sees Go1 robot in complete outdoor park scene!
+```
+
+### Scene Export API
+
+```python
+@app.get("/api/playground/environments")
+def list_playground_environments():
+    """List all 52 available environments by category"""
+    return {
+        "locomotion": ["Go1JoystickFlatTerrain", "BerkeleyHumanoidJoystickFlatTerrain", ...],
+        "manipulation": ["PandaPickCube", "AlohaHandOver", ...], 
+        "dm_control_suite": ["HumanoidRun", "CheetahRun", ...]
+    }
+
+@app.get("/api/playground/{category}/{env_name}/xml")
+def get_environment_xml(category: str, env_name: str):
+    """Export complete MuJoCo XML for any playground environment"""
+    registry_obj = getattr(registry, category)
+    env = registry_obj.load(env_name)
+    xml_string = env.sys.to_xml()
+    
+    return {
+        "xml": xml_string,
+        "env_name": env_name,
+        "robot_type": extract_robot_type(xml_string),
+        "scene_description": get_scene_description(env_name)
+    }
+```
+
+### Frontend Scene Selector
+
+```javascript
+// 1. Populate scene dropdown
+const environments = await fetch('/api/playground/environments').then(r => r.json());
+
+// 2. User selects: "Go1JoystickFlatTerrain"
+const selectedEnv = "Go1JoystickFlatTerrain";
+
+// 3. Load complete scene XML
+const {xml, robot_type} = await fetch(
+    `/api/playground/locomotion/${selectedEnv}/xml`
+).then(r => r.json());
+
+// 4. Initialize MuJoCo with complete scene
+const model = mujoco.Model.load_from_xml(xml);
+const simulation = new mujoco.Simulation(model);
+
+// 5. User now sees Go1 robot in full outdoor terrain!
+```
+
+### Scene Categories & Visual Contexts
+
+| **Environment** | **Visual Context** | **Demo Appeal** |
+|-----------------|-------------------|-----------------|
+| `Go1JoystickFlatTerrain` | Outdoor park with grass terrain | High - recognizable robot |
+| `BerkeleyHumanoidJoystickFlatTerrain` | Flat ground for human-like movement | High - emotional connection |
+| `SpotJoystickGaitTracking` | Industrial/construction setting | Medium - professional appeal |
+| `PandaPickCube` | Laboratory workspace with cube | Medium - precise manipulation |
+| `AlohaHandOver` | Kitchen/workshop environment | High - relatable cooking tasks |
+
+## JAX/Flax to ONNX Conversion Pipeline
+
+### The Training → Browser Pipeline
+
+```python
+# 1. Train policy with Brax PPO (JAX/Flax)
+policy_fn, params = train_brax_policy(env, reward_fn, steps=100_000)
+
+# 2. Convert JAX model to ONNX for browser inference
+def convert_jax_to_onnx(policy_fn, params, input_shape):
+    # JAX → TensorFlow conversion
+    import jax2tf
+    tf_fn = jax2tf.convert(lambda x: policy_fn(params, x))
+    
+    # Create TensorFlow concrete function
+    tf_concrete = tf_fn.get_concrete_function(
+        tf.TensorSpec(input_shape, tf.float32)
+    )
+    
+    # TensorFlow → ONNX export
+    import tf2onnx
+    onnx_model, _ = tf2onnx.convert.from_function(
+        tf_concrete,
+        input_signature=[tf.TensorSpec(input_shape, tf.float32)]
+    )
+    
+    return onnx_model
+
+# 3. Save ONNX model to Modal volume
+onnx_path = f"/models/{policy_id}.onnx"
+save_onnx_model(onnx_model, onnx_path)
+
+# 4. Return download URL for frontend
+return {
+    "policy_id": policy_id,
+    "onnx_url": f"/api/models/{policy_id}.onnx",
+    "input_shape": env.observation_space.shape,
+    "output_shape": env.action_space.shape
+}
+```
+
+### Browser Policy Execution
+
+```javascript
+// 1. Download trained ONNX model
+const policyResponse = await fetch('/api/models/dance_policy_v1.onnx');
+const policyBuffer = await policyResponse.arrayBuffer();
+
+// 2. Load ONNX model in browser
+const session = await ort.InferenceSession.create(policyBuffer);
+
+// 3. Real-time policy inference loop
+function simulationStep() {
+    // Get current robot state from MuJoCo
+    const observation = simulation.getObservation();
+    
+    // Run policy inference
+    const feeds = {'input': new ort.Tensor('float32', observation, [1, obsSize])};
+    const results = await session.run(feeds);
+    const actions = results.output.data;
+    
+    // Apply actions to MuJoCo simulation
+    simulation.setActions(actions);
+    simulation.step();
+    
+    requestAnimationFrame(simulationStep);
+}
+```
+
+### Performance Optimization
+
+**Training Time Targets:**
+- **Command-based**: 0 seconds (direct velocity command generation)
+- **Fine-tuning**: 30-60 seconds (build on pre-trained locomotion) 
+- **Full training**: 8-15 minutes (complete custom behavior)
+
+**Model Size Optimization:**
+- **Policy compression**: Quantize ONNX to FP16 for faster download
+- **Batch conversion**: Pre-convert popular base policies
+- **Progressive loading**: Start with low-quality, upgrade to high-quality
+
+**Browser Performance:**
+- **ONNX.js optimization**: Use WebGL/WASM backends
+- **Inference caching**: Cache policy outputs for repeated states
+- **Frame rate targets**: 30 FPS simulation with real-time policy execution
+
+## Intelligent Policy Generation System
+
+TabRL features an **intelligent policy generation API** that automatically selects the optimal training approach based on task complexity, time budget, and quality requirements.
+
+### Auto-Strategy Selection
+
+The system tries approaches from **fastest to slowest**:
+
+#### **Level 1: Command-Based Generation (0 seconds)**
+- Generate velocity commands directly from task description
+- Use existing pre-trained joystick policies 
+- Best for: Dance, choreography, simple behaviors
+- Success rate: ~70% for motion tasks
+
+#### **Level 2: Fine-Tuning (30-60 seconds)**  
+- Quick fine-tune existing policies with custom rewards
+- Leverage pre-trained locomotion/manipulation skills
+- Best for: Task-specific behaviors, style variations
+- Success rate: ~90% for similar tasks
+
+#### **Level 3: Full Training (8+ minutes)**
+- Train from scratch with completely custom rewards
+- Maximum flexibility and task coverage
+- Best for: Novel tasks, complex multi-objective behaviors
+- Success rate: ~95% for any feasible task
+
+### Smart API Design
+
+```python
+POST /api/generate-policy
+{
+  "task_description": "Make robot dance to electronic music",
+  "robot": "Go1", 
+  "time_budget": "fast|medium|unlimited",
+  "quality_threshold": 0.8,
+  "scene_context": "urban_playground"
+}
+
+Response:
+{
+  "policy_id": "dance_policy_v1",
+  "method_used": "fine_tuned", 
+  "training_time": "45 seconds",
+  "quality_score": 0.87,
+  "alternatives_tried": ["command_based"],
+  "model_ready": true,
+  "onnx_url": "/models/dance_policy_v1.onnx"
+}
+```
+
+### Quality Scoring System
+
+Each approach gets evaluated on:
+- **Task completion accuracy** (0-1)
+- **Movement naturalness** (0-1) 
+- **Safety/stability** (0-1)
+- **Energy efficiency** (0-1)
+
+## Recommended Robot Selection
+
+Based on MuJoCo Playground's 52 available environments, we recommend these **hero robots** for maximum visual impact and user engagement:
+
+### Locomotion Stars (Primary Focus)
+
+#### **Boston Dynamics Go1 Quadruped**
+- **Environments**: `Go1JoystickFlatTerrain`, `Go1JoystickRoughTerrain`
+- **Why**: Most recognizable robot, great for outdoor scenes
+- **Best demos**: Parkour, dancing, following, patrol
+
+#### **Berkeley Humanoid** 
+- **Environments**: `BerkeleyHumanoidJoystickFlatTerrain`, `BerkeleyHumanoidJoystickRoughTerrain`
+- **Why**: Most human-like, emotional connection
+- **Best demos**: Dancing, martial arts, sports, social interaction
+
+#### **Boston Dynamics Spot**
+- **Environments**: `SpotJoystickGaitTracking`, `SpotFlatTerrainJoystick`
+- **Why**: Industrial icon, professional appeal
+- **Best demos**: Construction sites, inspection, security patrol
+
+### Manipulation Masters (Secondary)
+
+#### **Aloha Bimanual Robot**
+- **Environments**: `AlohaHandOver`, `AlohaSinglePegInsertion`
+- **Why**: Dual-arm coordination, impressive dexterity
+- **Best demos**: Cooking, assembly, collaborative tasks
+
+#### **Franka Panda Arm**
+- **Environments**: `PandaPickCube`, `PandaOpenCabinet`, `PandaRobotiqPushCube`
+- **Why**: Industry standard, precise manipulation
+- **Best demos**: Laboratory work, delicate assembly, bartending
+
+### Classic Control (Tertiary)
+
+#### **Humanoid Walker**
+- **Environments**: `HumanoidRun`, `HumanoidWalk`, `HumanoidStand`
+- **Why**: Athletic movements, sports scenarios
+- **Best demos**: Running, gymnastics, rehabilitation
+
+### Scene Pairing Recommendations
+
+| Robot | Ideal Scene | Demo Scenario |
+|-------|-------------|---------------|
+| Go1 | Urban park, warehouse | Package delivery, security patrol |
+| Berkeley Humanoid | Living room, dance studio | Home assistant, entertainment |
+| Spot | Construction site, factory | Industrial inspection, maintenance |
+| Aloha | Kitchen, workshop | Cooking demo, assembly line |
+| Panda | Laboratory, bar | Scientific experiments, cocktail making |
+
 ## 🚀 MVP Features (Hackathon Scope)
 
 ### Must Have
