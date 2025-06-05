@@ -10,12 +10,15 @@ from typing import Dict, Any, Optional
 # Modal app for training
 app = modal.App("tabrl-playground-training")
 
-# GPU image with all required dependencies
+# Create Modal image with dependencies
 image = (
     modal.Image.debian_slim()
-    .apt_install(["libegl1-mesa", "libopengl0", "libglu1-mesa", "git"])  # Add git for menagerie
+    .apt_install(["libegl1-mesa", "libopengl0", "libglu1-mesa", "git"])
+    .pip_install(
+        "jax[cuda12_pip]",  # H100 uses CUDA 12
+        find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
+    )
     .pip_install([
-        "jax[cuda12_pip]", 
         "mujoco", 
         "mujoco_mjx",
         "brax", 
@@ -24,9 +27,12 @@ image = (
         "mediapy",
         "matplotlib",
         "numpy",
-        "playground"  # Fixed package name
+        "playground"
     ])
-    .env({"MUJOCO_GL": "egl"})  # Set EGL rendering
+    .env({
+        "MUJOCO_GL": "egl",  # Set EGL rendering
+        "XLA_FLAGS": "--xla_gpu_triton_gemm_any=True"  # Enable GPU for JAX
+    })
 )
 
 # Create volume
@@ -34,7 +40,7 @@ volume = modal.Volume.from_name("tabrl-models", create_if_missing=True)
 
 @app.function(
     image=image,
-    gpu="A100-40GB",  # Use modern GPU spec format
+    gpu="H100",  # Upgrade to H100 for faster training!
     timeout=3600,  # 1 hour timeout
     volumes={"/models": volume},
 )
@@ -71,12 +77,23 @@ def train_playground_locomotion(
     from datetime import datetime
     import functools
     import pickle
+    import subprocess
     
     from mujoco_playground import registry
+    from brax.training.agents.ppo import train as ppo
     from brax.training.agents.ppo import networks as ppo_networks
-    from brax.training.agents import ppo
     
     print(f"🚀 Starting training for {category}/{env_name}")
+    print(f"ppo type: {type(ppo)}, callable: {callable(ppo) if ppo is not None else 'None'}")
+    
+    # Check GPU availability
+    try:
+        gpu_info = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
+        print("GPU Info:")
+        print(gpu_info.stdout[:500])  # First 500 chars
+    except:
+        print("nvidia-smi not available")
+    
     print(f"JAX devices: {jax.devices()}")
     
     # Load environment and config based on category
@@ -157,8 +174,7 @@ def train_playground_locomotion(
     ppo_training_params['num_timesteps'] = training_steps
     
     train_fn = functools.partial(
-        ppo.train, 
-        **ppo_training_params,
+        ppo.train, **dict(ppo_training_params),
         network_factory=network_factory,
         randomization_fn=randomizer,
         progress_fn=progress

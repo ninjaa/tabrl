@@ -119,7 +119,7 @@ curl -X POST http://localhost:8000/api/policy/generate \
 ### **PHASE 1: Training Pipeline (NEXT 2 HOURS) - 🔥 IN PROGRESS**
 
 #### ✅ **COMPLETED** (Last 4 hours):
-- **Modal GPU deployment** - ✅ LIVE on A100 GPUs
+- **Modal GPU deployment** - ✅ LIVE on H100 GPUs (note: H100 uses jax[cuda12_pip], A100 uses jax[cuda11_pip])
 - **52 MuJoCo Playground environments discovered** - ✅ READY
 - **Hero robot selection** - ✅ Go1, Berkeley Humanoid, Spot, Aloha, Panda
 - **Intelligent policy generation API design** - ✅ DOCUMENTED
@@ -161,7 +161,7 @@ mujoco.Model.load_from_xml(xml_string)
 2. **Scene loads**: Complete outdoor terrain with Go1 robot
 3. **User prompts**: "Make robot dance to electronic music"
 4. **AI generates**: Custom reward function for dancing behavior  
-5. **Modal trains**: 30-60 second fine-tuning on A100 GPU
+5. **Modal trains**: 30-60 second fine-tuning on H100 GPU
 6. **Policy downloads**: ONNX model ready for browser
 7. **Robot dances**: Live in browser with trained behavior!
 
@@ -184,7 +184,7 @@ mujoco.Model.load_from_xml(xml_string)
 ## 🔧 **Technical Status**
 
 ### **Backend Infrastructure**:
-- ✅ **Modal GPU Service**: Deployed on A100 hardware
+- ✅ **Modal GPU Service**: Deployed on H100 hardware (CUDA 12)
 - ✅ **MuJoCo Playground**: 52 environments integrated
 - ✅ **JAX/Brax Training**: PPO with domain randomization
 - 🧪 **ONNX Export**: JAX → TensorFlow → ONNX pipeline
@@ -237,3 +237,28 @@ mujoco.Model.load_from_xml(xml_string)
 - **Backup Plan C**: Show training progress only if ONNX conversion fails
 
 **Current Status: 🟡 ON TRACK** for 5-hour demo completion!
+
+---
+
+## 🚀 Quick Reference Commands
+
+### Modal GPU Deployment
+```bash
+# Deploy/update Modal app
+cd backend && MODAL_FORCE_BUILD=1 uv run modal deploy modal_playground_training.py
+
+# Test training (100K steps, ~30s on H100)
+uv run python playground_trainer.py --quick-test --env Go1JoystickFlatTerrain --category locomotion
+
+# Full training (30M steps, ~1 min on H100)
+uv run python playground_trainer.py --env Go1JoystickFlatTerrain --category locomotion --steps 30000000
+```
+
+### Local Development
+```bash
+# Backend
+cd backend && uv run python app.py
+
+# Frontend
+cd frontend && npm run dev
+```

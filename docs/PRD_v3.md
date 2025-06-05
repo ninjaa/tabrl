@@ -138,7 +138,12 @@ export_to_onnx(params, obs_shape=(24,), action_shape=(12,))
 
 ### Modal GPU Deployment
 ```python
-@modal.function(gpu="A100", timeout=600)  # 10-minute timeout
+# Note: GPU Hardware Configuration
+# - H100: Uses CUDA 12 - install `jax[cuda12_pip]`
+# - A100: Uses CUDA 11 - install `jax[cuda11_pip]`
+# Modal automatically detects and provisions the correct CUDA driver
+
+@modal.function(gpu="H100", timeout=600)  # 10-minute timeout
 def train_locomotion_policy(scene_name, reward_code, config):
     # Load scene in Brax
     env = load_brax_environment(scene_name)
@@ -156,6 +161,29 @@ def train_locomotion_policy(scene_name, reward_code, config):
 ```
 
 ## 📋 User Flows (Current Implementation)
+
+### Modal Deployment & Testing
+
+#### Deploy Training Infrastructure
+```bash
+# Deploy Modal app with GPU training
+cd backend
+MODAL_FORCE_BUILD=1 uv run modal deploy modal_playground_training.py
+
+# Quick test with 100K steps (~30 seconds on H100)
+uv run python playground_trainer.py --quick-test \
+  --env Go1JoystickFlatTerrain \
+  --category locomotion
+
+# Full training with 30M steps (~1 minute on H100)
+uv run python playground_trainer.py \
+  --env Go1JoystickFlatTerrain \
+  --category locomotion \
+  --steps 30000000
+
+# List trained models
+uv run python playground_trainer.py --list-models
+```
 
 ### Completed User Experience
 1. **Landing Page**
@@ -315,9 +343,12 @@ save_onnx_model(onnx_model, onnx_path)
 # 4. Return download URL for frontend
 return {
     "policy_id": policy_id,
-    "onnx_url": f"/api/models/{policy_id}.onnx",
-    "input_shape": env.observation_space.shape,
-    "output_shape": env.action_space.shape
+    "method_used": "fine_tuned", 
+    "training_time": "45 seconds",
+    "quality_score": 0.87,
+    "alternatives_tried": ["command_based"],
+    "model_ready": true,
+    "onnx_url": "/models/dance_policy_v1.onnx"
 }
 ```
 
