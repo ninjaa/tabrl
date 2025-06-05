@@ -188,16 +188,6 @@ async def get_available_llm_models():
         "current": inference_engine.get_current_model()
     }
 
-@app.get("/api/scenes")
-async def list_scenes():
-    """[DEPRECATED] Use /api/playground/environments instead
-    
-    This endpoint is deprecated and will be removed in the next version.
-    Please use the MuJoCo Playground API endpoints instead.
-    """
-    # Return empty for backwards compatibility
-    return {"scenes": {}, "deprecated": True, "message": "Please use /api/playground/environments instead"}
-
 @app.post("/api/model/select")
 async def select_model(request: ModelSelectionRequest):
     """Select a model for inference"""
@@ -688,6 +678,144 @@ async def multi_instance_inference(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Multi-instance inference error: {e}")
         await websocket.close()
+
+@app.get("/api/playground/models")
+async def list_playground_models():
+    """List all available playground models with metadata"""
+    try:
+        from mujoco_playground import registry
+        
+        models = []
+        for category in ['locomotion', 'manipulation', 'dm_control_suite']:
+            envs = registry.list_envs(category=category)
+            for env_name in envs:
+                # Basic metadata - expand as needed
+                model_info = {
+                    'id': env_name,
+                    'name': env_name.replace('_', ' ').title(),
+                    'category': category,
+                    'dof': 12 if 'quadruped' in env_name.lower() else 6,  # Placeholder
+                    'has_base_policy': env_name == 'Go1JoystickFlatTerrain',  # Only Go1 has base for now
+                    'thumbnail': f'/static/thumbnails/{env_name}.png' if os.path.exists(f'static/thumbnails/{env_name}.png') else None
+                }
+                models.append(model_info)
+                
+        return {"models": models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/training/approaches")
+async def generate_training_approaches(request: dict):
+    """Generate training approaches using specified LLM provider"""
+    model_id = request.get("model_id")
+    task_description = request.get("task_description")
+    num_approaches = request.get("num_approaches", 3)
+    llm_model = request.get("llm_model", "claude-opus-4-20250514")
+    
+    # For now, return mock data - integrate with actual generation
+    approaches = []
+    approach_types = ["rhythmic", "smooth", "energetic"]
+    
+    for i in range(num_approaches):
+        approach = {
+            "name": f"{approach_types[i].capitalize()} {task_description.split()[0].capitalize()}",
+            "description": f"A {approach_types[i]} approach to {task_description}",
+            "reward_code": f"""def reward_fn(state, action):
+    # {approach_types[i].capitalize()} reward for {task_description}
+    base_reward = 1.0
+    # Add specific reward logic here
+    return base_reward"""
+        }
+        approaches.append(approach)
+    
+    return {"approaches": approaches}
+
+@app.post("/api/training/batch")
+async def start_batch_training(request: dict):
+    """Start multiple training jobs in parallel on Modal"""
+    model_id = request.get("model_id")
+    approaches = request.get("approaches", [])
+    num_steps = request.get("num_steps", 50000)
+    use_base_policy = request.get("use_base_policy", False)
+    
+    # Import Modal function
+    try:
+        import modal
+        train_fn = modal.Function.lookup("tabrl-custom-reward-training", "train_custom_reward")
+        
+        jobs = []
+        for approach in approaches:
+            # Spawn Modal job
+            job = train_fn.spawn(
+                scene_name=model_id,
+                reward_function_code=approach["reward_code"],
+                reward_function_name="reward_fn",
+                num_timesteps=num_steps,
+                render_video=True
+            )
+            
+            job_info = {
+                "job_id": job.object_id,
+                "approach": approach["name"],
+                "status": "running",
+                "progress": 0
+            }
+            jobs.append(job_info)
+            
+            # Store job info for tracking
+            training_status[job.object_id] = {
+                "task": approach["name"],
+                "status": "running",
+                "progress": 0,
+                "modal_job": job
+            }
+        
+        return {"jobs": jobs}
+        
+    except Exception as e:
+        logger.error(f"Failed to start batch training: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/training/{job_id}/status")
+async def get_job_status(job_id: str):
+    """Get status of a Modal training job"""
+    if job_id not in training_status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_info = training_status[job_id]
+    modal_job = job_info.get("modal_job")
+    
+    if modal_job:
+        try:
+            # Check if job is done
+            if modal_job.is_ready():
+                result = modal_job.get()
+                job_info["status"] = "completed"
+                job_info["progress"] = 1.0
+                job_info["result"] = result
+            else:
+                # Estimate progress based on time
+                job_info["progress"] = min(0.9, job_info["progress"] + 0.1)
+        except Exception as e:
+            job_info["status"] = "failed"
+            job_info["error"] = str(e)
+    
+    return job_info
+
+@app.post("/api/training/render")
+async def render_training_video(request: dict):
+    """Render a video from a trained model"""
+    job_id = request.get("job_id")
+    model_path = request.get("model_path")
+    
+    # For now, return a mock video URL
+    # In production, this would call render_brax_model.py
+    video_url = f"/static/videos/{job_id}.mp4"
+    
+    # You would actually run:
+    # python render_brax_model.py --model_path {model_path} --output {video_path}
+    
+    return {"video_url": video_url}
 
 if __name__ == "__main__":
     print("🚀 Starting TabRL Backend...")

@@ -16,10 +16,10 @@ class InferenceEngine:
     AVAILABLE_MODELS = {
         "claude-sonnet-4-20250514": {"provider": "anthropic", "name": "Claude 4 Sonnet"},
         "claude-opus-4-20250514": {"provider": "anthropic", "name": "Claude 4 Opus"},
-        "claude-3-5-sonnet-20241022": {"provider": "anthropic", "name": "Claude 3.5 Sonnet"},
-        "gpt-4o": {"provider": "openai", "name": "GPT-4o"},
-        "gemini/gemini-1.5-pro": {"provider": "google", "name": "Gemini 1.5 Pro"},
-        "deepseek/deepseek-chat": {"provider": "deepseek", "name": "DeepSeek Chat"},
+        "o3-mini": {"provider": "openai", "name": "o3 mini"},
+        "o3": {"provider": "openai", "name": "o3"},
+        "gemini/gemini-2.5-pro-preview-06-05": {"provider": "google", "name": "Gemini 1.5 Pro"},
+        "deepseek/deepseek-r1-0528": {"provider": "deepseek", "name": "DeepSeek Chat"},
     }
     
     def __init__(self):
