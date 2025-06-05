@@ -182,42 +182,13 @@ async def get_available_llm_models():
 
 @app.get("/api/scenes")
 async def list_scenes():
-    """List available robot scenes organized by category"""
-    if not scenes_path.exists():
-        return {"scenes": {}}
+    """[DEPRECATED] Use /api/playground/environments instead
     
-    scenes_by_category = {}
-    
-    # Iterate through category directories (manipulation, locomotion, simple)
-    for category_dir in scenes_path.iterdir():
-        if category_dir.is_dir():
-            category_name = category_dir.name
-            scenes_in_category = []
-            
-            # Look for robot/scene XML files in each scene subdirectory
-            for scene_dir in category_dir.iterdir():
-                if scene_dir.is_dir():
-                    # Try different XML file names
-                    xml_files = ["scene.xml", "robot.xml", "ur5e.xml", "scene_left.xml", "scene_right.xml"]
-                    xml_file = None
-                    for xml_name in xml_files:
-                        if (scene_dir / xml_name).exists():
-                            xml_file = scene_dir / xml_name
-                            break
-                    
-                    if xml_file:
-                        scenes_in_category.append({
-                            "name": scene_dir.name,
-                            "category": category_name,
-                            "xml_path": f"scenes/{category_name}/{scene_dir.name}/{xml_file.name}",
-                            "thumbnail": f"scenes/{category_name}/{scene_dir.name}/thumbnail.png" 
-                            if (scene_dir / "thumbnail.png").exists() else None
-                        })
-            
-            if scenes_in_category:
-                scenes_by_category[category_name] = scenes_in_category
-    
-    return {"scenes": scenes_by_category}
+    This endpoint is deprecated and will be removed in the next version.
+    Please use the MuJoCo Playground API endpoints instead.
+    """
+    # Return empty for backwards compatibility
+    return {"scenes": {}, "deprecated": True, "message": "Please use /api/playground/environments instead"}
 
 @app.post("/api/model/select")
 async def select_model(request: ModelSelectionRequest):
