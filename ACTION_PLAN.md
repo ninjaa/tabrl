@@ -262,3 +262,104 @@ cd backend && uv run python app.py
 # Frontend
 cd frontend && npm run dev
 ```
+
+---
+
+## 🔮 Future Improvements (Post-Hackathon)
+
+### Infrastructure Optimizations
+- [ ] **Split ONNX export to separate container with its own dependencies**
+  - Avoid JAX/TensorFlow/tf2onnx dependency conflicts
+  - Use CPU-only container for conversion (cost savings)
+  - Cleaner separation of concerns between training and export
+
+### Additional Features
+- [ ] Multi-agent training scenarios
+- [ ] Sim-to-real transfer validation
+- [ ] Custom reward function library
+- [ ] Training hyperparameter optimization
+- [ ] Model versioning and A/B testing
+
+## TabRL Action Plan for AI Engineer World's Fair Demo
+
+## 🚨 Demo Time: 5 PM Today! Core functionality needed by 9 AM!
+
+### Current Status (1:30 AM)
+- ✅ JAX downgraded to 0.6.0 to fix cuSolver GPU error  
+- ✅ Removed TensorFlow/tf2onnx due to dependency conflicts
+- ✅ Created server-side JAX inference system as alternative
+- ✅ Added playground API endpoints for scene listing/retrieval
+- 🔄 Need to test Modal deployment with simplified dependencies
+- 🔄 Need to implement frontend WebSocket client for inference
+
+### Immediate Actions (Demo-Ready by 9 AM)
+
+1. **Deploy Updated Modal Container** (1:30-2:00 AM)
+   - [x] Remove numpy pin to resolve dependencies
+   - [x] Remove TensorFlow/tf2onnx/ONNX from container
+   - [x] Test deployment: `cd backend && modal deploy modal_playground_training.py`
+   - [x] Verify GPU training works with JAX 0.6.0
+
+2. **Test Server-Side Inference** (2:00-2:30 AM)
+   - [ ] Create test endpoint to load a trained model
+   - [ ] Test WebSocket inference with dummy observations
+   - [ ] Measure latency for real-time control
+
+3. **Update Frontend for Server-Side Inference** (2:30-3:30 AM)
+   - [ ] Create WebSocket client for policy inference
+   - [ ] Integrate with MuJoCo WASM simulation loop
+   - [ ] Add connection status indicator
+   - [ ] Handle reconnection logic
+
+4. **Integration Testing** (3:30-4:00 AM)
+   - [ ] Train a simple locomotion policy
+   - [ ] Load it via inference API
+   - [ ] Test full loop: MuJoCo sim → server inference → actions → sim
+
+5. **Demo Polish** (4:00-5:00 AM)
+   - [ ] Create demo scene selection UI
+   - [ ] Add training progress visualization
+   - [ ] Prepare 2-3 trained policies for instant demo
+   - [ ] Test end-to-end flow multiple times
+
+### Post-Demo Improvements
+
+1. **Split Container Architecture**
+   - Create separate Modal container for ONNX export
+   - Use older numpy/TF versions compatible with tf2onnx
+   - Export trained JAX models to ONNX in batch process
+
+2. **Direct JAX → ONNX Export**
+   - Investigate jax2onnx or similar tools
+   - Bypass TensorFlow entirely if possible
+
+3. **Client-Side JAX**
+   - Explore running JAX in browser via WASM
+   - Would eliminate server-side inference need
+
+### Dependencies Summary
+
+**Training Container (Modal GPU)**:
+- Python 3.10 base
+- jax[cuda12]==0.6.0 (for H100 GPU)
+- mujoco, mujoco_mjx, brax, playground
+- flax, optax, numpy (unpinned)
+- NO TensorFlow/tf2onnx/ONNX
+
+**Backend API**:
+- FastAPI with WebSocket support
+- JAX for model loading/inference
+- Standard backend dependencies
+
+**Frontend**:
+- React + MuJoCo WASM
+- WebSocket client for inference
+- onnxruntime-web (for future use)
+
+### Key Architecture Change
+Due to tf2onnx/TensorFlow/numpy dependency conflicts, we're using:
+- **Server-side inference** via WebSocket for the demo
+- JAX models stay on backend, frontend sends observations
+- Post-demo: implement proper ONNX export pipeline
+
+This approach ensures demo stability while preserving path to browser-based inference.

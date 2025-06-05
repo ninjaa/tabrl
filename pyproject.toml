@@ -2,7 +2,7 @@
 name = "tabrl"
 version = "0.1.0"
 description = "Train Robots in Your Browser Tab"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 
 dependencies = [
     "modal",

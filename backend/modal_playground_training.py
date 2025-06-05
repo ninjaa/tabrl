@@ -12,11 +12,11 @@ app = modal.App("tabrl-playground-training")
 
 # Create Modal image with dependencies
 image = (
-    modal.Image.debian_slim()
+    modal.Image.debian_slim(python_version="3.10")
     .apt_install(["libegl1-mesa", "libopengl0", "libglu1-mesa", "git"])
     .pip_install(
-        "pip>=24.1", # old pip can't do hyphens in next package
-        "jax[cuda12-pip]==0.6.1",
+        "pip>=24.1", # old pip can't do hyphens, we had a hyphenated package at one point
+        "jax[cuda12]==0.6.0", # 0.6.1 has a known cuSolver bug
         find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
     )
     .pip_install([
@@ -27,7 +27,7 @@ image = (
         "optax",
         "mediapy",
         "matplotlib",
-        "numpy",
+        "numpy", 
         "playground",  # MuJoCo Playground environments
     ])
     .env({"MUJOCO_GL": "egl", "XLA_FLAGS": "--xla_gpu_triton_gemm_any=True"})
