@@ -303,8 +303,8 @@ def train_custom_reward(
         if hasattr(base_env, 'mjx_model'):
             # Extract states for rendering
             states_for_render = [s.data for s in rollout_states]
-            # Create HTML visualization
-            html_str = html.render(base_env.mjx_model.ptr, states_for_render)
+            # Create HTML visualization - use mjx_model directly without .ptr
+            html_str = html.render(base_env.mjx_model, states_for_render)
         else:
             print("Warning: Could not find model for rendering")
             html_str = "<p>Rendering not available</p>"
