@@ -5,22 +5,30 @@ Handles inference, training, and model management
 
 import os
 import time
-from pathlib import Path
-from typing import Optional, List, Dict
 import asyncio
 import json
 import re
+import logging
+from pathlib import Path
+from typing import Optional, List, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 import uvicorn
+import numpy as np
 
 from inference import InferenceEngine
 from training import TrainingEngine
 from scene_parser import parse_scene_xml, generate_llm_context
+from playground_api import (
+    get_available_environments,
+    get_environment_xml,
+    get_environment_info
+)
+from jax_inference import inference_engine, run_inference_server
+from pydantic import BaseModel
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -217,13 +225,48 @@ async def select_model(request: ModelSelectionRequest):
     else:
         raise HTTPException(status_code=400, detail="Invalid model name")
 
-@app.get("/api/model/current")
+@app.get("/api/current-model")
 async def get_current_model():
     """Get currently selected model"""
     return {
         "model": inference_engine.get_current_model(),
-        "info": inference_engine.get_available_models().get(inference_engine.get_current_model(), {})
+        "available_models": inference_engine.get_available_models()
     }
+
+@app.get("/api/playground/environments")
+async def list_playground_environments():
+    """List all available MuJoCo Playground environments organized by category"""
+    try:
+        environments = get_available_environments()
+        return environments
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list environments: {str(e)}")
+
+@app.get("/api/playground/{category}/{env_name}/xml")
+async def get_playground_environment_xml(category: str, env_name: str):
+    """Get the XML for a specific playground environment"""
+    try:
+        xml_content = get_environment_xml(category, env_name)
+        if xml_content is None:
+            raise HTTPException(status_code=404, detail=f"Environment {category}/{env_name} not found")
+        
+        return {"xml": xml_content, "environment": env_name, "category": category}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get XML: {str(e)}")
+
+@app.get("/api/playground/{category}/{env_name}/info")
+async def get_environment_info(category: str, env_name: str):
+    """Get detailed information about a specific playground environment"""
+    try:
+        info = get_environment_info(category, env_name)
+        if info is None:
+            raise HTTPException(status_code=404, detail="Environment not found")
+        return info
+    except Exception as e:
+        logger.error(f"Error getting environment info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/policy/generate", response_model=PolicyGenerationResponse)
 async def generate_policy(request: PolicyGenerationRequest):
@@ -333,6 +376,74 @@ async def generate_policy(request: PolicyGenerationRequest):
     except Exception as e:
         print(f"Policy generation error: {e}")
         raise HTTPException(status_code=500, detail=f"Policy generation failed: {str(e)}")
+
+@app.post("/api/inference/load_model")
+async def load_model_for_inference(model_path: str = Body(..., embed=True)):
+    """Load a JAX model for server-side inference"""
+    try:
+        success = inference_engine.load_model(model_path)
+        if success:
+            model_id = Path(model_path).stem
+            info = inference_engine.get_model_info(model_id)
+            return {"status": "success", "model_info": info}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to load model")
+    except Exception as e:
+        logger.error(f"Error loading model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/inference/predict")
+async def run_policy_inference(
+    model_id: str = Body(...), 
+    observation: list = Body(...)
+):
+    """Run JAX policy inference on the server"""
+    try:
+        action = inference_engine.predict(model_id, np.array(observation))
+        if action is not None:
+            return {
+                "status": "success",
+                "action": action.tolist()
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Inference failed")
+    except Exception as e:
+        logger.error(f"Error during inference: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/inference")
+async def websocket_inference(websocket: WebSocket):
+    """WebSocket for real-time policy inference"""
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_json()
+            model_id = data.get('model_id')
+            observation = data.get('observation')
+            
+            if not model_id or observation is None:
+                await websocket.send_json({
+                    'status': 'error',
+                    'message': 'Invalid request format'
+                })
+                continue
+            
+            action = inference_engine.predict(model_id, np.array(observation))
+            
+            if action is not None:
+                await websocket.send_json({
+                    'status': 'success',
+                    'action': action.tolist()
+                })
+            else:
+                await websocket.send_json({
+                    'status': 'error',
+                    'message': 'Model not loaded or inference failed'
+                })
+                
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        await websocket.close()
 
 if __name__ == "__main__":
     print("🚀 Starting TabRL Backend...")
