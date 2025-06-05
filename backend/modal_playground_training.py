@@ -14,25 +14,23 @@ app = modal.App("tabrl-playground-training")
 image = (
     modal.Image.debian_slim()
     .apt_install(["libegl1-mesa", "libopengl0", "libglu1-mesa", "git"])
+    .pip_install("jax==0.4.35")  # Install base JAX first
     .pip_install(
-        "jax[cuda12_pip]",  # H100 uses CUDA 12
+        "jaxlib[cuda12_pip]==0.4.35",  # Then CUDA-enabled jaxlib
         find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
     )
     .pip_install([
-        "mujoco", 
-        "mujoco_mjx",
-        "brax", 
+        "mujoco>=3.0.0",
+        "mujoco_mjx>=3.0.0", 
+        "brax>=0.11.0",
         "flax",
         "optax",
         "mediapy",
         "matplotlib",
         "numpy",
-        "playground"
+        "playground",  # MuJoCo Playground environments
     ])
-    .env({
-        "MUJOCO_GL": "egl",  # Set EGL rendering
-        "XLA_FLAGS": "--xla_gpu_triton_gemm_any=True"  # Enable GPU for JAX
-    })
+    .env({"MUJOCO_GL": "egl", "XLA_FLAGS": "--xla_gpu_triton_gemm_any=True"})
 )
 
 # Create volume
@@ -80,11 +78,12 @@ def train_playground_locomotion(
     import subprocess
     
     from mujoco_playground import registry
+    from mujoco_playground import wrapper
     from brax.training.agents.ppo import train as ppo
     from brax.training.agents.ppo import networks as ppo_networks
     
     print(f"🚀 Starting training for {category}/{env_name}")
-    print(f"ppo type: {type(ppo)}, callable: {callable(ppo) if ppo is not None else 'None'}")
+    print(f"ppo.train type: {type(ppo.train)}, callable: {callable(ppo.train)}")
     
     # Check GPU availability
     try:
@@ -186,7 +185,7 @@ def train_playground_locomotion(
     make_inference_fn, params, metrics = train_fn(
         environment=env,
         eval_env=registry_obj.load(env_name, config=env_cfg),
-        wrap_env_fn=None,
+        wrap_env_fn=wrapper.wrap_for_brax_training,
     )
     
     training_time = (datetime.now() - start_time).total_seconds()
