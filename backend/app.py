@@ -27,7 +27,7 @@ from playground_api import (
     get_environment_xml,
     get_environment_info
 )
-from jax_inference import inference_engine, run_inference_server
+from jax_inference import JAXPolicyInference, run_inference_server
 from pydantic import BaseModel
 
 # Load environment variables
@@ -58,9 +58,10 @@ scenes_path = Path(__file__).parent.parent / "scenes"
 if scenes_path.exists():
     app.mount("/scenes", StaticFiles(directory=str(scenes_path)), name="scenes")
 
-# Initialize engines
+# Initialize services
 inference_engine = InferenceEngine()
 training_engine = TrainingEngine()
+jax_inference_engine = JAXPolicyInference()  # For JAX policy inference
 
 # Request/Response Models
 class InferenceRequest(BaseModel):
@@ -381,10 +382,10 @@ async def generate_policy(request: PolicyGenerationRequest):
 async def load_model_for_inference(model_path: str = Body(..., embed=True)):
     """Load a JAX model for server-side inference"""
     try:
-        success = inference_engine.load_model(model_path)
+        success = jax_inference_engine.load_model(model_path)
         if success:
             model_id = Path(model_path).stem
-            info = inference_engine.get_model_info(model_id)
+            info = jax_inference_engine.get_model_info(model_id)
             return {"status": "success", "model_info": info}
         else:
             raise HTTPException(status_code=400, detail="Failed to load model")
@@ -399,7 +400,7 @@ async def run_policy_inference(
 ):
     """Run JAX policy inference on the server"""
     try:
-        action = inference_engine.predict(model_id, np.array(observation))
+        action = jax_inference_engine.predict(model_id, np.array(observation))
         if action is not None:
             return {
                 "status": "success",
@@ -413,37 +414,67 @@ async def run_policy_inference(
 
 @app.websocket("/ws/inference")
 async def websocket_inference(websocket: WebSocket):
-    """WebSocket for real-time policy inference"""
+    """WebSocket endpoint for real-time inference"""
     await websocket.accept()
+    
     try:
         while True:
+            # Receive observation from client
             data = await websocket.receive_json()
-            model_id = data.get('model_id')
-            observation = data.get('observation')
             
-            if not model_id or observation is None:
+            if data.get("type") == "inference_request":
+                observation = data.get("observation")
+                model_id = data.get("model_id")
+                
+                # Get action from inference engine
+                action = jax_inference_engine.predict(model_id, np.array(observation))
+                
+                if action is not None:
+                    await websocket.send_json({
+                        "type": "inference_response",
+                        "action": action.tolist()
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "No model loaded or inference failed"
+                    })
+            elif data.get("type") == "ping":
                 await websocket.send_json({
-                    'status': 'error',
-                    'message': 'Invalid request format'
-                })
-                continue
-            
-            action = inference_engine.predict(model_id, np.array(observation))
-            
-            if action is not None:
-                await websocket.send_json({
-                    'status': 'success',
-                    'action': action.tolist()
-                })
-            else:
-                await websocket.send_json({
-                    'status': 'error',
-                    'message': 'Model not loaded or inference failed'
+                    "type": "pong"
                 })
                 
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         await websocket.close()
+
+@app.get("/api/trained-models")
+async def list_trained_models():
+    """List all trained JAX models from Modal volume"""
+    try:
+        from modal import Function
+        list_models_fn = Function.from_name("tabrl-playground-training", "list_trained_models")
+        models = list_models_fn.remote()
+        return {"models": models}
+    except Exception as e:
+        logger.error(f"Error listing trained models: {e}")
+        # Return empty list if Modal is not connected
+        return {"models": []}
+
+@app.get("/api/trained-models/{model_name}/info")
+async def get_trained_model_info(model_name: str):
+    """Get information about a specific trained model"""
+    try:
+        from modal import Function
+        get_info_fn = Function.from_name("tabrl-playground-training", "get_model_info")
+        info = get_info_fn.remote(model_name)
+        if info:
+            return info
+        else:
+            raise HTTPException(status_code=404, detail="Model not found")
+    except Exception as e:
+        logger.error(f"Error getting model info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     print("🚀 Starting TabRL Backend...")
