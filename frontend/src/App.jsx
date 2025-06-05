@@ -137,6 +137,12 @@ function TrainingPanel() {
       return;
     }
 
+    console.log('🚀 Starting policy generation...', {
+      taskDescription,
+      selectedScene,
+      selectedModel
+    });
+
     setGeneratingPolicies(true);
     try {
       const response = await fetch('http://localhost:8000/api/policy/generate', {
@@ -149,14 +155,33 @@ function TrainingPanel() {
         })
       });
 
+      console.log('📡 Response status:', response.status);
       const data = await response.json();
+      console.log('📦 Response data:', data);
+
       if (response.ok) {
-        setRewardApproaches(data.reward_functions || []);
+        console.log('✅ Policy generation successful:', data.reward_functions?.length || 0, 'reward functions');
+        
+        // Parse raw_response if reward_functions are embedded there
+        let rewardFunctions = data.reward_functions || [];
+        if (!rewardFunctions.length && data.raw_response) {
+          try {
+            const parsedResponse = JSON.parse(data.raw_response);
+            rewardFunctions = parsedResponse.reward_functions || [];
+            console.log('📋 Parsed from raw_response:', rewardFunctions.length, 'reward functions');
+          } catch (e) {
+            console.error('Failed to parse raw_response:', e);
+          }
+        }
+        
+        setRewardApproaches(rewardFunctions);
         setSelectedReward(null);
       } else {
-        alert(`Policy generation failed: ${data.detail}`);
+        console.error('❌ Policy generation failed:', data);
+        alert(`Policy generation failed: ${data.detail || 'Unknown error'}`);
       }
     } catch (error) {
+      console.error('🔥 Network error:', error);
       alert(`Error: ${error.message}`);
     } finally {
       setGeneratingPolicies(false);
@@ -290,6 +315,7 @@ function TrainingPanel() {
       {rewardApproaches.length > 0 && (
         <div className="training-step">
           <h3>2. Select Reward Approach</h3>
+          <p>Found {rewardApproaches.length} reward functions:</p>
           <div className="reward-approaches">
             {rewardApproaches.map((reward, index) => (
               <div 
@@ -297,12 +323,14 @@ function TrainingPanel() {
                 className={`reward-card ${selectedReward === reward ? 'selected' : ''}`}
                 onClick={() => setSelectedReward(reward)}
               >
-                <h4>{reward.name}</h4>
-                <p className="reward-type">{reward.type}</p>
-                <p className="reward-description">{reward.description}</p>
+                <h4>{reward.name || `Reward Function ${index + 1}`}</h4>
+                <p className="reward-type">{reward.type || 'Unknown'}</p>
+                <p className="reward-description">
+                  {reward.description || `${reward.type} reward approach for ${reward.name}`}
+                </p>
                 <details>
                   <summary>View Code</summary>
-                  <pre className="reward-code">{reward.reward}</pre>
+                  <pre className="reward-code">{reward.reward || 'No code available'}</pre>
                 </details>
               </div>
             ))}
