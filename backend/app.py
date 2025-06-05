@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Optional, List, Dict
 
 from fastapi import FastAPI, HTTPException, Body, WebSocket
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import numpy as np
@@ -22,13 +22,10 @@ import numpy as np
 from inference import InferenceEngine
 from training import TrainingEngine
 from scene_parser import parse_scene_xml, generate_llm_context
-from playground_api import (
-    get_available_environments,
-    get_environment_xml,
-    get_environment_info
-)
+import playground_api
 from jax_inference import JAXPolicyInference, run_inference_server
 from pydantic import BaseModel
+import menagerie_server
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -52,6 +49,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static directories
+frontend_path = Path(__file__).parent.parent / "frontend" / "dist"
+if frontend_path.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+
+# Serve temp_menagerie as static files
+temp_menagerie_path = Path(__file__).parent.parent / "temp_menagerie"
+if temp_menagerie_path.exists():
+    app.mount("/menagerie", StaticFiles(directory=str(temp_menagerie_path)), name="menagerie")
+    print(f"📁 Serving MuJoCo Menagerie from: {temp_menagerie_path}")
 
 # Mount static files for scenes
 scenes_path = Path(__file__).parent.parent / "scenes"
@@ -211,7 +219,7 @@ async def get_current_model():
 async def list_playground_environments_endpoint():
     """List all available MuJoCo Playground environments organized by category"""
     try:
-        environments = get_available_environments()
+        environments = playground_api.get_available_environments()
         return environments
     except Exception as e:
         logger.error(f"Error listing playground environments: {e}")
@@ -221,7 +229,7 @@ async def list_playground_environments_endpoint():
 async def get_playground_xml_endpoint(category: str, env_name: str):
     """Get the XML content for a specific playground environment"""
     try:
-        xml = get_environment_xml(category, env_name)
+        xml = playground_api.get_environment_xml(category, env_name)
         if xml is None:
             raise HTTPException(status_code=404, detail="Environment not found")
         return {"xml": xml}
@@ -232,12 +240,176 @@ async def get_playground_xml_endpoint(category: str, env_name: str):
 async def get_playground_info_endpoint(category: str, env_name: str):
     """Get detailed information about a specific playground environment"""
     try:
-        info = get_environment_info(category, env_name)
+        info = playground_api.get_environment_info(category, env_name)
         if info is None:
             raise HTTPException(status_code=404, detail="Environment not found")
         return info
     except Exception as e:
         logger.error(f"Error getting environment info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/playground/{category}/{env_name}/asset/{path:path}")
+async def get_playground_asset(category: str, env_name: str, path: str):
+    """Get an asset file for a playground environment."""
+    import mujoco_playground
+    from pathlib import Path
+    
+    # First check if this is an included XML file
+    if path.endswith('.xml'):
+        # Try to find it in the mujoco_playground package
+        playground_path = Path(mujoco_playground.__file__).parent
+        
+        # Common paths to check
+        possible_paths = [
+            playground_path / category / env_name / path,
+            playground_path / category / path,
+            playground_path / "assets" / path,
+            playground_path / path,
+        ]
+        
+        # Also check in temp_menagerie if available
+        temp_menagerie = Path(__file__).parent.parent / "temp_menagerie"
+        if temp_menagerie.exists():
+            # Map environment names to menagerie folders
+            env_to_folder = {
+                "G1JoystickFlatTerrain": "unitree_g1",
+                "G1JoystickRoughTerrain": "unitree_g1",
+                "Go1JoystickFlatTerrain": "unitree_go1",
+                "Go1JoystickRoughTerrain": "unitree_go1",
+                "BarkourJoystick": "google_barkour_vb",
+                "SpotJoystickGaitTracking": "boston_dynamics_spot",
+                "SpotFlatTerrainJoystick": "boston_dynamics_spot",
+                "H1JoystickGaitTracking": "unitree_h1",
+                "H1InplaceGaitTracking": "unitree_h1",
+                "Op3Joystick": "robotis_op3",
+                "BerkeleyHumanoidJoystickFlatTerrain": "berkeley_humanoid",
+                "BerkeleyHumanoidJoystickRoughTerrain": "berkeley_humanoid",
+                "BerkeleyHumanoidInplaceGaitTracking": "berkeley_humanoid",
+            }
+            
+            folder = env_to_folder.get(env_name)
+            if folder:
+                possible_paths.extend([
+                    temp_menagerie / folder / path,
+                    temp_menagerie / folder / "assets" / path,
+                ])
+        
+        for p in possible_paths:
+            if p.exists():
+                return FileResponse(str(p), media_type="application/xml")
+    
+    # For other assets (meshes, textures), similar logic
+    return JSONResponse(
+        status_code=404,
+        content={"detail": f"Asset not found: {path}"}
+    )
+
+@app.get("/api/playground/{category}/{env_name}/scene-package")
+async def get_playground_scene_package(category: str, env_name: str):
+    """Get a complete scene package with all assets resolved and included."""
+    try:
+        # Get the base XML from playground
+        xml_content = playground_api.get_playground_xml(category, env_name)
+        if not xml_content:
+            raise HTTPException(status_code=404, detail=f"Environment {category}/{env_name} not found")
+        
+        # Get the complete package with all assets
+        temp_menagerie = Path(__file__).parent.parent / "temp_menagerie"
+        if not temp_menagerie.exists():
+            logger.warning(f"temp_menagerie not found at {temp_menagerie}")
+            # Return just the XML if we don't have menagerie
+            return {"xml": xml_content, "assets": {}}
+        
+        package = menagerie_server.get_complete_scene_package(
+            category, env_name, xml_content, temp_menagerie
+        )
+        
+        # Log the results for debugging
+        logger.info(f"Scene package for {category}/{env_name}: {len(package.get('assets', {}))} assets")
+        
+        return package
+        
+    except Exception as e:
+        logger.error(f"Error getting scene package: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/playground/{category}/{env_name}/complete-xml")
+async def get_playground_complete_xml(category: str, env_name: str):
+    """Get the complete XML with all includes resolved."""
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+    import mujoco_playground
+    
+    try:
+        # Get the base XML
+        xml_content = playground_api.get_playground_xml(category, env_name)
+        if not xml_content:
+            raise HTTPException(status_code=404, detail=f"Environment {category}/{env_name} not found")
+        
+        # Parse the XML
+        root = ET.fromstring(xml_content)
+        
+        # Find the appropriate base path
+        temp_menagerie = Path(__file__).parent.parent / "temp_menagerie"
+        env_to_folder = {
+            "G1JoystickFlatTerrain": "unitree_g1",
+            "G1JoystickRoughTerrain": "unitree_g1",
+            "Go1JoystickFlatTerrain": "unitree_go1",
+            "Go1JoystickRoughTerrain": "unitree_go1",
+            "BarkourJoystick": "google_barkour_vb",
+            "SpotJoystickGaitTracking": "boston_dynamics_spot",
+            "SpotFlatTerrainJoystick": "boston_dynamics_spot",
+            "H1JoystickGaitTracking": "unitree_h1",
+            "H1InplaceGaitTracking": "unitree_h1",
+            "Op3Joystick": "robotis_op3",
+            "BerkeleyHumanoidJoystickFlatTerrain": "berkeley_humanoid",
+            "BerkeleyHumanoidJoystickRoughTerrain": "berkeley_humanoid",
+            "BerkeleyHumanoidInplaceGaitTracking": "berkeley_humanoid",
+        }
+        
+        folder = env_to_folder.get(env_name)
+        base_path = temp_menagerie / folder if folder and temp_menagerie.exists() else None
+        
+        # Process includes recursively
+        def process_includes(element, current_path):
+            includes = element.findall('.//include')
+            for include in includes:
+                file_attr = include.get('file')
+                if file_attr and base_path:
+                    include_path = current_path / file_attr
+                    if include_path.exists():
+                        # Read the included file
+                        include_content = include_path.read_text()
+                        include_root = ET.fromstring(include_content)
+                        
+                        # Get the parent of the include element
+                        parent = element
+                        for elem in element.iter():
+                            if include in elem:
+                                parent = elem
+                                break
+                        
+                        # Replace include with contents
+                        idx = list(parent).index(include)
+                        parent.remove(include)
+                        
+                        # Add all children from included file
+                        for child in include_root:
+                            parent.insert(idx, child)
+                            idx += 1
+                            
+                        # Process nested includes
+                        process_includes(parent, include_path.parent)
+        
+        if base_path and base_path.exists():
+            process_includes(root, base_path)
+        
+        # Convert back to string
+        complete_xml = ET.tostring(root, encoding='unicode')
+        
+        return JSONResponse(content={"xml": complete_xml})
+        
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/policy/generate", response_model=PolicyGenerationResponse)
@@ -251,13 +423,13 @@ async def generate_policy(request: PolicyGenerationRequest):
         if "/" not in request.scene_name:
             # It might be a playground environment without category prefix
             # Try to find it in available environments
-            environments = get_available_environments()
+            environments = playground_api.get_available_environments()
             
             # Search across all categories
             for category, envs in environments.items():
                 if request.scene_name in envs:
                     # Found it! Get the XML
-                    xml_content = get_environment_xml(category, request.scene_name)
+                    xml_content = playground_api.get_environment_xml(category, request.scene_name)
                     if xml_content:
                         # Parse the XML content directly
                         import tempfile
@@ -473,6 +645,49 @@ async def get_trained_model_info(model_name: str):
     except Exception as e:
         logger.error(f"Error getting model info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/api/models/inference")
+async def multi_instance_inference(websocket: WebSocket):
+    """WebSocket endpoint for multiple inference instances"""
+    await websocket.accept()
+    
+    # Parse query parameters for scene and instance
+    query_params = dict(websocket.query_params)
+    scene_name = query_params.get('scene', 'default')
+    instance_id = query_params.get('instance', 'default')
+    
+    logger.info(f"New inference connection: scene={scene_name}, instance={instance_id}")
+    
+    try:
+        # Simple simulation loop for demo
+        # In production, this would load the actual trained model for the scene
+        step_count = 0
+        
+        while True:
+            # Simulate getting observations and generating actions
+            # In a real implementation, this would:
+            # 1. Receive observations from the frontend simulation
+            # 2. Run inference using the loaded JAX model
+            # 3. Send back actions
+            
+            # For now, generate dummy actions for demo
+            action_dim = 6  # Default action dimension
+            actions = [np.sin(step_count * 0.1 + i) * 0.5 for i in range(action_dim)]
+            
+            await websocket.send_json({
+                "type": "action",
+                "actions": actions,
+                "step": step_count,
+                "scene": scene_name,
+                "instance": instance_id
+            })
+            
+            step_count += 1
+            await asyncio.sleep(0.05)  # 20 Hz update rate
+            
+    except Exception as e:
+        logger.error(f"Multi-instance inference error: {e}")
+        await websocket.close()
 
 if __name__ == "__main__":
     print("🚀 Starting TabRL Backend...")

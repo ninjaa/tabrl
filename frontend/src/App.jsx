@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
+import MujocoTest from './components/MujocoTest';
+import MujocoViewer from './components/MujocoViewer';
+import MultiViewerDemo from './components/MultiViewerDemo';
 
 function App() {
   const [activeTab, setActiveTab] = useState('viewer');
@@ -42,12 +45,19 @@ function App() {
         >
           Training
         </button>
+        <button 
+          className={activeTab === 'multiviewer' ? 'active' : ''} 
+          onClick={() => setActiveTab('multiviewer')}
+        >
+          Multi Viewer Demo
+        </button>
       </nav>
 
       <main className="app-main">
         {activeTab === 'viewer' && <ModelViewer />}
         {activeTab === 'inference' && <InferencePanel />}
         {activeTab === 'training' && <TrainingPanel />}
+        {activeTab === 'multiviewer' && <MultiViewerDemo />}
       </main>
     </div>
   );
@@ -58,11 +68,9 @@ function ModelViewer() {
   return (
     <div className="panel">
       <h2>🎬 Model Viewer</h2>
+      <MujocoTest />
       <div className="model-viewport">
-        <p>MuJoCo WASM integration will go here</p>
-        <div className="placeholder-3d">
-          [3D Robot Visualization]
-        </div>
+        <MujocoViewer />
       </div>
       <div className="model-controls">
         <button>Load Robot XML</button>

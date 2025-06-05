@@ -1,4 +1,5 @@
 temp_menagerie
+backend/archive_scripts
 *.pyc
 .env
 
