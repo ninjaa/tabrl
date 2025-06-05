@@ -308,26 +308,6 @@ def get_model_info(model_filename: str):
         print(f"Error getting model info: {e}")
         return {"error": f"Error loading model: {str(e)}"}
 
-@app.function(
-    volumes={"/models": models_volume}
-)
-def download_model(model_name: str):
-    """Download model data from Modal volume"""
-    import pickle
-    
-    model_path = Path("/models") / model_name
-    if not model_path.exists():
-        print(f"Model path {model_path} does not exist")
-        return None
-        
-    try:
-        with open(model_path, "rb") as f:
-            model_data = pickle.load(f)
-        print(f"Successfully loaded model from {model_path}")
-        return model_data
-    except Exception as e:
-        print(f"Error downloading model: {e}")
-        return None
 
 if __name__ == "__main__":
     # Quick test
