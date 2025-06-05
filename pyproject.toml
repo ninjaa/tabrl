@@ -17,6 +17,11 @@ dependencies = [
     "python-dotenv",
     "mujoco>=3.3.2",
     "json-repair>=0.46.1",
+    "jax>=0.6.1",
+    "brax>=0.12.3",
+    "mujoco-mjx>=3.3.2",
+    "flax>=0.10.6",
+    "playground>=0.0.4",
 ]
 
 [tool.uv.sources]
