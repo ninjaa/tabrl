@@ -94,6 +94,8 @@ class PolicyGenerationResponse(BaseModel):
     observation_space: int
     action_space: int
 
+logger = logging.getLogger(__name__)
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
@@ -234,30 +236,28 @@ async def get_current_model():
     }
 
 @app.get("/api/playground/environments")
-async def list_playground_environments():
+async def list_playground_environments_endpoint():
     """List all available MuJoCo Playground environments organized by category"""
     try:
         environments = get_available_environments()
         return environments
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list environments: {str(e)}")
+        logger.error(f"Error listing playground environments: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/playground/{category}/{env_name}/xml")
-async def get_playground_environment_xml(category: str, env_name: str):
-    """Get the XML for a specific playground environment"""
+async def get_playground_xml_endpoint(category: str, env_name: str):
+    """Get the XML content for a specific playground environment"""
     try:
-        xml_content = get_environment_xml(category, env_name)
-        if xml_content is None:
-            raise HTTPException(status_code=404, detail=f"Environment {category}/{env_name} not found")
-        
-        return {"xml": xml_content, "environment": env_name, "category": category}
-    except HTTPException:
-        raise
+        xml = get_environment_xml(category, env_name)
+        if xml is None:
+            raise HTTPException(status_code=404, detail="Environment not found")
+        return {"xml": xml}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get XML: {str(e)}")
 
 @app.get("/api/playground/{category}/{env_name}/info")
-async def get_environment_info(category: str, env_name: str):
+async def get_playground_info_endpoint(category: str, env_name: str):
     """Get detailed information about a specific playground environment"""
     try:
         info = get_environment_info(category, env_name)
