@@ -14,9 +14,9 @@ app = modal.App("tabrl-playground-training")
 image = (
     modal.Image.debian_slim()
     .apt_install(["libegl1-mesa", "libopengl0", "libglu1-mesa", "git"])
-    .pip_install("jax==0.4.35")  # Install base JAX first
     .pip_install(
-        "jaxlib[cuda12_pip]==0.4.35",  # Then CUDA-enabled jaxlib
+        "pip>=24.1", # old pip can't do hyphens in next package
+        "jax[cuda12-pip]==0.6.1",
         find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
     )
     .pip_install([
@@ -84,6 +84,7 @@ def train_playground_locomotion(
     
     print(f"🚀 Starting training for {category}/{env_name}")
     print(f"ppo.train type: {type(ppo.train)}, callable: {callable(ppo.train)}")
+    jax.print_environment_info()    
     
     # Check GPU availability
     try:
@@ -147,13 +148,13 @@ def train_playground_locomotion(
     def progress(num_steps, metrics):
         training_data['steps'].append(num_steps)
         training_data['rewards'].append(metrics['eval/episode_reward'])
-        training_data['episode_lengths'].append(metrics['eval/episode_length'])
+        training_data['episode_lengths'].append(metrics['eval/avg_episode_length'])
         training_data['times'].append(datetime.now())
         
         elapsed = (datetime.now() - start_time).total_seconds()
         print(f"Step {num_steps:,}: "
               f"Reward: {metrics['eval/episode_reward']:.2f}, "
-              f"Length: {metrics['eval/episode_length']:.1f}, "
+              f"Length: {metrics['eval/avg_episode_length']:.1f}, "
               f"Time: {elapsed:.1f}s")
     
     # Setup training
@@ -235,7 +236,7 @@ def train_playground_locomotion(
     
     model_data = {
         'params': params,
-        'make_inference_fn': make_inference_fn,
+        # 'make_inference_fn': make_inference_fn,  # Can't pickle this
         'env_name': env_name,
         'env_cfg': env_cfg,
         'training_steps': training_steps,
