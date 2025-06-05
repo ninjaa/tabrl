@@ -6,7 +6,7 @@ import TrainingPageV2 from './components/TrainingPageV2';
 import MultiViewerDemo from './components/MultiViewerDemo';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('viewer');
+  const [activeTab, setActiveTab] = useState('training');
 
   return (
     <div className="app">

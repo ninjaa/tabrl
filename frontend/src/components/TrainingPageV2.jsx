@@ -10,33 +10,33 @@ const TrainingPageV2 = () => {
   const [behaviorPrompt, setBehaviorPrompt] = useState('');
   const [numSteps, setNumSteps] = useState(50000);
   
-  // LLM Tabs State - Updated for 4 models
+  // LLM Tabs State - Updated for 3 models
   const [activeLLMTab, setActiveLLMTab] = useState('claude');
   const [llmApproaches, setLLMApproaches] = useState({
     claude: null,
     openai: null,
-    gemini: null,
-    deepseek: null
+    gemini: null
   });
   
   // Training State
   const [trainingJobs, setTrainingJobs] = useState({
     claude: [],
     openai: [],
-    gemini: [],
-    deepseek: []
+    gemini: []
   });
   
   // Video Results
   const [videos, setVideos] = useState({});
+  
+  // UI State
+  const [showRewardCode, setShowRewardCode] = useState(false);
   
   // Loading States
   const [loadingModels, setLoadingModels] = useState(true);
   const [generatingApproaches, setGeneratingApproaches] = useState({
     claude: false,
     openai: false,
-    gemini: false,
-    deepseek: false
+    gemini: false
   });
 
   // Fetch available models on mount
@@ -134,8 +134,7 @@ const TrainingPageV2 = () => {
     const model_mapping = {
         "claude": "claude-opus-4-20250514",
         "openai": "o3",
-        "gemini": "gemini/gemini-2.5-pro-preview-06-05",
-        "deepseek": "deepseek/deepseek-r1-0528"
+        "gemini": "gemini/gemini-2.5-pro-preview-06-05"
     };
     
     try {
@@ -164,8 +163,8 @@ const TrainingPageV2 = () => {
   };
 
   const generateAllApproaches = () => {
-    // Generate approaches for all 4 LLM providers in parallel
-    ['claude', 'openai', 'gemini', 'deepseek'].forEach(provider => {
+    // Generate approaches for all 3 LLM providers in parallel
+    ['claude', 'openai', 'gemini'].forEach(provider => {
       generateApproachesForLLM(provider);
     });
   };
@@ -359,13 +358,6 @@ const TrainingPageV2 = () => {
             <span className="company-icon">🔵</span>
             Gemini Pro 2.5
           </button>
-          <button
-            className={`tab ${activeLLMTab === 'deepseek' ? 'active' : ''}`}
-            onClick={() => setActiveLLMTab('deepseek')}
-          >
-            <span className="company-icon">🔴</span>
-            DeepSeek R1
-          </button>
         </div>
 
         {/* Tab Content */}
@@ -379,21 +371,31 @@ const TrainingPageV2 = () => {
                   <div key={idx} className="approach-card">
                     <h4>{approach.name}</h4>
                     <p>{approach.description}</p>
-                    <details>
-                      <summary>View Reward Code</summary>
-                      <pre>{approach.reward_code}</pre>
-                    </details>
+                    {showRewardCode && (
+                      <div className="reward-code-display">
+                        <pre>{approach.reward_code}</pre>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
               
-              <button
-                className="train-all-btn"
-                onClick={() => startTrainingBatch(activeLLMTab)}
-                disabled={trainingJobs[activeLLMTab].length > 0}
-              >
-                Train All 3 Approaches
-              </button>
+              <div className="controls-row">
+                <button
+                  className="toggle-code-btn"
+                  onClick={() => setShowRewardCode(!showRewardCode)}
+                >
+                  {showRewardCode ? 'Hide Reward Code' : 'Show Reward Code'}
+                </button>
+                
+                <button
+                  className="train-all-btn"
+                  onClick={() => startTrainingBatch(activeLLMTab)}
+                  disabled={trainingJobs[activeLLMTab].length > 0}
+                >
+                  Train All 3 Approaches
+                </button>
+              </div>
               
               {/* Training Progress */}
               {trainingJobs[activeLLMTab].length > 0 && (
@@ -425,13 +427,12 @@ const TrainingPageV2 = () => {
       <section className="video-comparison">
         <h2>Results Comparison</h2>
         <div className="video-grid">
-          {['claude', 'openai', 'gemini', 'deepseek'].map(provider => (
+          {['claude', 'openai', 'gemini'].map(provider => (
             <div key={provider} className="llm-videos">
               <h3>
                 {provider === 'claude' && '🟣 Claude Opus 4'}
                 {provider === 'openai' && '🟢 OpenAI o3'}
                 {provider === 'gemini' && '🔵 Gemini Pro 2.5'}
-                {provider === 'deepseek' && '🔴 DeepSeek R1'}
               </h3>
               <div className="videos-row">
                 {trainingJobs[provider].map((job, idx) => {

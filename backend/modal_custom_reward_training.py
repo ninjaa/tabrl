@@ -264,66 +264,134 @@ def train_custom_reward(
     plt.savefig(plot_path)
     plt.close()
     
-    # Optionally render a rollout video
-    if render_video:
-        print("\nRendering rollout video...")
-        video_path = Path(f"/workspace/models/{output_name}_rollout.mp4")
-        
-        # Evaluate trained policy
-        eval_env = env  # Use original env for visualization
-        jit_reset = jax.jit(eval_env.reset)
-        jit_step = jax.jit(eval_env.step)
-        jit_inference_fn = jax.jit(make_inference_fn(params, deterministic=True))
-        
-        # Run a rollout
-        rng = jax.random.PRNGKey(42)
-        state = jit_reset(rng)
-        rollout_states = []
-        
-        for _ in range(1000):  # 1000 steps
-            act_rng, rng = jax.random.split(rng)
-            obs = state.obs
-            action, _ = jit_inference_fn(obs, act_rng)
-            state = jit_step(state, action)
-            rollout_states.append(state)
-            
-            if state.done:
-                break
-        
-        # Render the rollout
-        from brax.io import html
-        # Get the MuJoCo model from the base environment
-        if hasattr(eval_env, '_base'):
-            # Our custom wrapper
-            base_env = eval_env._base
-        else:
-            base_env = eval_env
-            
-        # MuJoCo Playground environments use mjx_model
-        if hasattr(base_env, 'mjx_model'):
-            # Extract states for rendering
-            states_for_render = [s.data for s in rollout_states]
-            # Create HTML visualization - use mjx_model directly without .ptr
-            html_str = html.render(base_env.mjx_model, states_for_render)
-        else:
-            print("Warning: Could not find model for rendering")
-            html_str = "<p>Rendering not available</p>"
-        
-        # Convert HTML to video using brax's utilities
-        # Note: Direct video export might need additional setup
-        # For now, save the HTML
-        html_path = Path(f"/workspace/models/{output_name}_rollout.html")
-        with open(html_path, "w") as f:
-            f.write(html_str)
-        print(f"Rollout visualization saved to {html_path}")
-    
     # Commit volume changes
     volume.commit()
+    
+    # RENDER VIDEO using render_brax_model.py approach
+    if render_video:
+        print("🎬 Rendering training video...")
+        try:
+            # Import video rendering dependencies
+            import imageio
+            import mujoco
+            
+            # Setup rendering options
+            scene_option = mujoco.MjvOption()
+            scene_option.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = False
+            scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
+            
+            # Use the saved model to create a policy for rollout
+            # Create policy function from saved params
+            def make_policy(params, deterministic=True):
+                def policy(observations, key):
+                    normalizer_state, actor_params, _ = params
+                    
+                    # Handle observations
+                    if isinstance(observations, dict) and 'state' in observations:
+                        obs = observations['state']
+                    else:
+                        obs = observations
+                    
+                    # Normalize observations if normalizer exists
+                    if normalizer_state is not None and hasattr(normalizer_state, 'mean'):
+                        if isinstance(normalizer_state.mean, dict) and 'state' in normalizer_state.mean:
+                            mean = normalizer_state.mean['state']
+                            std = normalizer_state.std['state']
+                        else:
+                            mean = normalizer_state.mean
+                            std = normalizer_state.std
+                        normalized_obs = (obs - mean) / (std + 1e-8)
+                    else:
+                        normalized_obs = obs
+                    
+                    # Forward pass through network
+                    network_params = actor_params['params']
+                    x = normalized_obs
+                    layer_idx = 0
+                    while f'hidden_{layer_idx}' in network_params:
+                        layer_name = f'hidden_{layer_idx}'
+                        w = network_params[layer_name]['kernel']
+                        b = network_params[layer_name]['bias']
+                        x = jnp.dot(x, w) + b
+                        
+                        if f'hidden_{layer_idx + 1}' not in network_params:
+                            break
+                        else:
+                            x = jax.nn.swish(x)
+                        layer_idx += 1
+                    
+                    # Get action mean (deterministic)
+                    action_dim = x.shape[-1] // 2
+                    action_mean = x[..., :action_dim]
+                    return action_mean, {}
+                return policy
+            
+            # Create inference function
+            inference_fn = make_policy(params, deterministic=True)
+            jit_inference_fn = jax.jit(inference_fn)
+            
+            # Create fresh environment for video using the same env_cls from training
+            eval_env = env._base if hasattr(env, '_base') else env
+            # Get clean environment class
+            if hasattr(eval_env, '__class__'):
+                eval_env = eval_env.__class__()
+            else:
+                # Recreate from scene
+                category, env_name = scene_name.split('/', 1)
+                from mujoco_playground import registry
+                registry_obj = getattr(registry, category)
+                eval_env = registry_obj.load(env_name)
+            
+            jit_reset = jax.jit(eval_env.reset)
+            jit_step = jax.jit(eval_env.step)
+            
+            # Run rollout for video
+            print("Running rollout for video...")
+            video_rng = jax.random.PRNGKey(42)
+            rollout_states = []
+            
+            video_rng, reset_rng = jax.random.split(video_rng)
+            state = jit_reset(reset_rng)
+            
+            episode_length = 200  # 4 seconds at 50Hz
+            for i in range(episode_length):
+                act_rng, video_rng = jax.random.split(video_rng)
+                action, _ = jit_inference_fn(state.obs, act_rng)
+                state = jit_step(state, action)
+                rollout_states.append(state)
+                
+                if state.done:
+                    break
+            
+            # Render frames
+            print("Rendering frames...")
+            render_every = 2  # Every 2nd frame for smoother video
+            fps = 1.0 / eval_env.dt / render_every
+            traj = rollout_states[::render_every]
+            
+            frames = eval_env.render(
+                traj,
+                camera="side",
+                scene_option=scene_option,
+                height=480,
+                width=640
+            )
+            
+            # Save video
+            video_path = Path(f"/workspace/models/{output_name}_rollout.mp4")
+            imageio.mimsave(video_path, frames, fps=fps)
+            print(f"🎬 Video saved to: {video_path}")
+            
+        except Exception as e:
+            print(f"Video rendering failed: {e}")
+            video_path = None
+    else:
+        video_path = None
     
     return {
         'model_path': str(model_path),
         'plot_path': str(plot_path),
-        'video_path': str(video_path) if render_video else None,
+        'video_path': str(video_path) if video_path else None,
         'metadata': {
             'scene_name': scene_name,
             'env_name': env_name,

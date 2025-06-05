@@ -19,7 +19,6 @@ class InferenceEngine:
         "o3-mini": {"provider": "openai", "name": "o3 mini"},
         "o3": {"provider": "openai", "name": "o3"},
         "gemini/gemini-2.5-pro-preview-06-05": {"provider": "google", "name": "Gemini 1.5 Pro"},
-        "deepseek/deepseek-r1-0528": {"provider": "deepseek", "name": "DeepSeek Chat"},
     }
     
     def __init__(self):
@@ -112,13 +111,15 @@ Format your response as valid Python code with detailed explanations of the appr
                             "type": {"type": "string", "enum": ["dense", "sparse", "shaped"]},
                             "reward": {"type": "string"}
                         },
-                        "required": ["name", "type", "reward"]
+                        "required": ["name", "type", "reward"],
+                        "additionalProperties": False
                     }
                 },
                 "observation_space": {"type": "integer"},
                 "action_space": {"type": "integer"}
             },
-            "required": ["task", "scene", "policy_code", "reward_functions", "observation_space", "action_space"]
+            "required": ["task", "scene", "policy_code", "reward_functions", "observation_space", "action_space"],
+            "additionalProperties": False
         }
         
         # System prompt for structured policy generation
@@ -171,6 +172,9 @@ Make the reward functions realistic and task-specific. Each reward function shou
             {"role": "user", "content": f"Task: {prompt}"}
         ]
         
+        # O3 models only support temperature=1.0
+        temperature = 1.0 if model_to_use in ["o3", "o3-mini"] else 0.1
+        
         # Generate structured response using JSON schema
         response = await litellm.acompletion(
             model=model_to_use,
@@ -183,13 +187,16 @@ Make the reward functions realistic and task-specific. Each reward function shou
                     "strict": True
                 }
             },
-            max_tokens=4096,
-            temperature=0.1
+            max_tokens=8192,
+            temperature=temperature
         )
         
         # Parse the structured response
         import json
-        policy_data = json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content
+        if content is None:
+            raise ValueError("LLM returned empty response")
+        policy_data = json.loads(content)
         
         # Ensure correct dimensions
         policy_data["observation_space"] = obs_space

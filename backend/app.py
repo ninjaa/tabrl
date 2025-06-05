@@ -9,10 +9,11 @@ import asyncio
 import json
 import re
 import logging
+import hashlib
 from pathlib import Path
 from typing import Optional, List, Dict
 
-from fastapi import FastAPI, HTTPException, Body, WebSocket
+from fastapi import FastAPI, HTTPException, Body, WebSocket, Response
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +27,7 @@ import playground_api
 from jax_inference import JAXPolicyInference, run_inference_server
 from pydantic import BaseModel
 import menagerie_server
+from modal_custom_reward_training import app as modal_app
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -105,6 +107,14 @@ class PolicyGenerationResponse(BaseModel):
 
 logger = logging.getLogger(__name__)
 
+# Add approach cache
+approach_cache = {}
+
+def get_cache_key(model_id: str, task_description: str, llm_model: str) -> str:
+    """Generate a cache key for the approach request"""
+    data = f"{model_id}:{task_description}:{llm_model}"
+    return hashlib.md5(data.encode()).hexdigest()
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
@@ -131,43 +141,128 @@ async def inference_endpoint(request: InferenceRequest):
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.post("/api/training/start")
-async def start_training(request: TrainingRequest):
-    """Start training a new policy"""
+async def start_training(request: dict):
+    """Start training with video generation"""
     try:
-        training_id = training_engine.start_training_with_reward_code(
-            task_description=request.task_description,
-            scene_name=request.scene_name,
-            episodes=request.episodes,
-            reward_code=request.reward_code
+        # Extract request parameters
+        reward_code = request.get("reward_code")
+        reward_name = request.get("reward_name", "custom_reward")
+        scene_name = request.get("scene_name", "locomotion/Go1JoystickFlatTerrain")
+        num_timesteps = request.get("num_timesteps", 500000)
+        
+        # Generate unique job ID
+        import uuid
+        job_id = str(uuid.uuid4())[:8]
+        
+        # Access the deployed Modal function
+        from modal import Function
+        train_custom_reward = Function.from_name("tabrl-custom-reward-training", "train_custom_reward")
+        
+        print(f"🚀 Starting REAL Modal training job {job_id}...")
+        print(f"Scene: {scene_name}")
+        print(f"Timesteps: {num_timesteps:,}")
+        print(f"Reward: {reward_name}")
+        
+        # Submit to Modal GPU (async)
+        function_call = train_custom_reward.spawn(
+            scene_name=scene_name,
+            reward_function_code=reward_code,
+            reward_function_name="reward_fn",
+            num_timesteps=num_timesteps,
+            render_video=True
         )
         
+        # Track the job
+        training_jobs[job_id] = {
+            "function_call": function_call,
+            "status": "RUNNING",
+            "scene_name": scene_name,
+            "reward_name": reward_name,
+            "start_time": time.time(),
+            "progress": 0,
+            "result": None
+        }
+        
         return {
-            "status": "started",
-            "training_id": training_id,
-            "estimated_duration": f"{request.episodes * 5} seconds"
+            "job_id": job_id,
+            "status": "RUNNING",
+            "message": f"Modal GPU training started for {reward_name}"
         }
         
     except Exception as e:
+        print(f"Modal training start failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/training/status/{job_id}")
+async def get_training_status(job_id: str):
+    """Get training job status and results"""
+    if job_id not in training_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = training_jobs[job_id]
+    function_call = job["function_call"]
+    
+    try:
+        runtime = time.time() - job["start_time"]
+        
+        # Check if Modal function is done
+        try:
+            result = function_call.get(timeout=0.1)
+            # Modal training completed!
+            job["status"] = "COMPLETED"
+            job["result"] = result
+            
+            return {
+                "job_id": job_id,
+                "status": "COMPLETED",
+                "progress": 100,
+                "runtime": runtime,
+                "result": {
+                    "model_path": result["model_path"],
+                    "video_path": result["video_path"],
+                    "final_return": result["metadata"]["final_return"],
+                    "training_time": result["metadata"]["training_time"]
+                }
+            }
+        except Exception:
+            # Still running, estimate progress based on time (7 minutes = 420 seconds)
+            estimated_progress = min(95, (runtime / 420) * 100)
+            
+            return {
+                "job_id": job_id,
+                "status": "RUNNING",
+                "progress": int(estimated_progress),
+                "runtime": runtime,
+                "message": "Training on Modal GPU..."
+            }
+            
+    except Exception as e:
+        job["status"] = "FAILED"
+        return {
+            "job_id": job_id,
+            "status": "FAILED",
+            "error": str(e),
+            "runtime": time.time() - job["start_time"]
+        }
 
 @app.get("/api/training/{training_id}/status")
 async def get_training_status(training_id: str):
     """Get training progress"""
     try:
         status = training_engine.get_status(training_id)
-        return status
+        return Response(content=status, media_type="application/json")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.get("/api/models")
 async def list_models():
     """List available trained models"""
     models_dir = Path("models")
     if not models_dir.exists():
-        return {"models": []}
+        return Response(content={"models": []}, media_type="application/json")
     
     models = []
     for model_file in models_dir.glob("*.onnx"):
@@ -178,42 +273,36 @@ async def list_models():
             "created": model_file.stat().st_mtime
         })
     
-    return {"models": models}
+    return Response(content={"models": models}, media_type="application/json")
 
 @app.get("/api/models/llm")
 async def get_available_llm_models():
     """Get available LLM models"""
-    return {
-        "models": inference_engine.get_available_models(),
-        "current": inference_engine.get_current_model()
-    }
+    return Response(content={"models": inference_engine.get_available_models(), "current": inference_engine.get_current_model()}, media_type="application/json")
 
 @app.post("/api/model/select")
 async def select_model(request: ModelSelectionRequest):
     """Select a model for inference"""
     success = inference_engine.set_model(request.model)
     if success:
-        return {"status": "success", "model": request.model}
+        return Response(content={"status": "success", "model": request.model}, media_type="application/json")
     else:
-        raise HTTPException(status_code=400, detail="Invalid model name")
+        raise HTTPException(status_code=400, detail={"error": "Invalid model name"})
 
 @app.get("/api/current-model")
 async def get_current_model():
     """Get currently selected model"""
-    return {
-        "model": inference_engine.get_current_model(),
-        "available_models": inference_engine.get_available_models()
-    }
+    return Response(content={"model": inference_engine.get_current_model(), "available_models": inference_engine.get_available_models()}, media_type="application/json")
 
 @app.get("/api/playground/environments")
 async def list_playground_environments_endpoint():
     """List all available MuJoCo Playground environments organized by category"""
     try:
         environments = playground_api.get_available_environments()
-        return environments
+        return Response(content=environments, media_type="application/json")
     except Exception as e:
         logger.error(f"Error listing playground environments: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.get("/api/playground/{category}/{env_name}/xml")
 async def get_playground_xml_endpoint(category: str, env_name: str):
@@ -221,10 +310,10 @@ async def get_playground_xml_endpoint(category: str, env_name: str):
     try:
         xml = playground_api.get_environment_xml(category, env_name)
         if xml is None:
-            raise HTTPException(status_code=404, detail="Environment not found")
-        return {"xml": xml}
+            raise HTTPException(status_code=404, detail={"error": "Environment not found"})
+        return Response(content={"xml": xml}, media_type="application/json")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get XML: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": f"Failed to get XML: {str(e)}"})
 
 @app.get("/api/playground/{category}/{env_name}/info")
 async def get_playground_info_endpoint(category: str, env_name: str):
@@ -232,11 +321,11 @@ async def get_playground_info_endpoint(category: str, env_name: str):
     try:
         info = playground_api.get_environment_info(category, env_name)
         if info is None:
-            raise HTTPException(status_code=404, detail="Environment not found")
-        return info
+            raise HTTPException(status_code=404, detail={"error": "Environment not found"})
+        return Response(content=info, media_type="application/json")
     except Exception as e:
         logger.error(f"Error getting environment info: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.get("/api/playground/{category}/{env_name}/asset/{path:path}")
 async def get_playground_asset(category: str, env_name: str, path: str):
@@ -299,9 +388,9 @@ async def get_playground_scene_package(category: str, env_name: str):
     """Get a complete scene package with all assets resolved and included."""
     try:
         # Get the base XML from playground
-        xml_content = playground_api.get_playground_xml(category, env_name)
+        xml_content = playground_api.get_environment_xml(category, env_name)
         if not xml_content:
-            raise HTTPException(status_code=404, detail=f"Environment {category}/{env_name} not found")
+            raise HTTPException(status_code=404, detail={"error": f"Environment {category}/{env_name} not found"})
         
         # Get the complete package with all assets
         temp_menagerie = Path(__file__).parent.parent / "temp_menagerie"
@@ -317,11 +406,11 @@ async def get_playground_scene_package(category: str, env_name: str):
         # Log the results for debugging
         logger.info(f"Scene package for {category}/{env_name}: {len(package.get('assets', {}))} assets")
         
-        return package
+        return Response(content=package, media_type="application/json")
         
     except Exception as e:
         logger.error(f"Error getting scene package: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.get("/api/playground/{category}/{env_name}/complete-xml")
 async def get_playground_complete_xml(category: str, env_name: str):
@@ -332,9 +421,9 @@ async def get_playground_complete_xml(category: str, env_name: str):
     
     try:
         # Get the base XML
-        xml_content = playground_api.get_playground_xml(category, env_name)
+        xml_content = playground_api.get_environment_xml(category, env_name)
         if not xml_content:
-            raise HTTPException(status_code=404, detail=f"Environment {category}/{env_name} not found")
+            raise HTTPException(status_code=404, detail={"error": f"Environment {category}/{env_name} not found"})
         
         # Parse the XML
         root = ET.fromstring(xml_content)
@@ -397,10 +486,10 @@ async def get_playground_complete_xml(category: str, env_name: str):
         # Convert back to string
         complete_xml = ET.tostring(root, encoding='unicode')
         
-        return JSONResponse(content={"xml": complete_xml})
+        return Response(content={"xml": complete_xml}, media_type="application/json")
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.post("/api/policy/generate", response_model=PolicyGenerationResponse)
 async def generate_policy(request: PolicyGenerationRequest):
@@ -410,7 +499,23 @@ async def generate_policy(request: PolicyGenerationRequest):
         xml_content = None
         
         # First, check if it's a playground environment
-        if "/" not in request.scene_name:
+        if "/" in request.scene_name:
+            # It's a playground environment with category prefix
+            parts = request.scene_name.split("/", 1)
+            if len(parts) == 2:
+                category, env_name = parts
+                xml_content = playground_api.get_environment_xml(category, env_name)
+                if xml_content:
+                    # Parse the XML content directly
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                        f.write(xml_content)
+                        temp_path = f.name
+                    
+                    scene_structure = parse_scene_xml(temp_path)
+                    import os
+                    os.unlink(temp_path)
+        elif "/" not in request.scene_name:
             # It might be a playground environment without category prefix
             # Try to find it in available environments
             environments = playground_api.get_available_environments()
@@ -448,7 +553,7 @@ async def generate_policy(request: PolicyGenerationRequest):
             if xml_file:
                 scene_structure = parse_scene_xml(str(xml_file))
             else:
-                raise HTTPException(status_code=404, detail=f"Scene not found: {request.scene_name}")
+                raise HTTPException(status_code=404, detail={"error": f"Scene not found: {request.scene_name}"})
         
         # Create context for LLM
         llm_context = generate_llm_context(scene_structure, request.prompt)
@@ -536,7 +641,7 @@ async def generate_policy(request: PolicyGenerationRequest):
         
     except Exception as e:
         print(f"Policy generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Policy generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": f"Policy generation failed: {str(e)}"})
 
 @app.post("/api/inference/load_model")
 async def load_model_for_inference(model_path: str = Body(..., embed=True)):
@@ -546,12 +651,12 @@ async def load_model_for_inference(model_path: str = Body(..., embed=True)):
         if success:
             model_id = Path(model_path).stem
             info = jax_inference_engine.get_model_info(model_id)
-            return {"status": "success", "model_info": info}
+            return Response(content={"status": "success", "model_info": info}, media_type="application/json")
         else:
-            raise HTTPException(status_code=400, detail="Failed to load model")
+            raise HTTPException(status_code=400, detail={"error": "Failed to load model"})
     except Exception as e:
         logger.error(f"Error loading model: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.post("/api/inference/predict")
 async def run_policy_inference(
@@ -562,15 +667,12 @@ async def run_policy_inference(
     try:
         action = jax_inference_engine.predict(model_id, np.array(observation))
         if action is not None:
-            return {
-                "status": "success",
-                "action": action.tolist()
-            }
+            return Response(content={"status": "success", "action": action.tolist()}, media_type="application/json")
         else:
-            raise HTTPException(status_code=400, detail="Inference failed")
+            raise HTTPException(status_code=400, detail={"error": "Inference failed"})
     except Exception as e:
         logger.error(f"Error during inference: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.websocket("/ws/inference")
 async def websocket_inference(websocket: WebSocket):
@@ -615,11 +717,11 @@ async def list_trained_models():
         from modal import Function
         list_models_fn = Function.from_name("tabrl-playground-training", "list_trained_models")
         models = list_models_fn.remote()
-        return {"models": models}
+        return Response(content={"models": models}, media_type="application/json")
     except Exception as e:
         logger.error(f"Error listing trained models: {e}")
         # Return empty list if Modal is not connected
-        return {"models": []}
+        return Response(content={"models": []}, media_type="application/json")
 
 @app.get("/api/trained-models/{model_name}/info")
 async def get_trained_model_info(model_name: str):
@@ -629,12 +731,12 @@ async def get_trained_model_info(model_name: str):
         get_info_fn = Function.from_name("tabrl-playground-training", "get_model_info")
         info = get_info_fn.remote(model_name)
         if info:
-            return info
+            return Response(content=info, media_type="application/json")
         else:
-            raise HTTPException(status_code=404, detail="Model not found")
+            raise HTTPException(status_code=404, detail={"error": "Model not found"})
     except Exception as e:
         logger.error(f"Error getting model info: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.websocket("/api/models/inference")
 async def multi_instance_inference(websocket: WebSocket):
@@ -700,9 +802,9 @@ async def list_playground_models():
                 }
                 models.append(model_info)
                 
-        return {"models": models}
+        return Response(content={"models": models}, media_type="application/json")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.post("/api/training/approaches")
 async def generate_training_approaches(request: dict):
@@ -712,23 +814,80 @@ async def generate_training_approaches(request: dict):
     num_approaches = request.get("num_approaches", 3)
     llm_model = request.get("llm_model", "claude-opus-4-20250514")
     
-    # For now, return mock data - integrate with actual generation
-    approaches = []
-    approach_types = ["rhythmic", "smooth", "energetic"]
+    # Validate required fields
+    if not task_description or not model_id:
+        raise HTTPException(status_code=400, detail="task_description and model_id are required")
     
-    for i in range(num_approaches):
-        approach = {
-            "name": f"{approach_types[i].capitalize()} {task_description.split()[0].capitalize()}",
-            "description": f"A {approach_types[i]} approach to {task_description}",
-            "reward_code": f"""def reward_fn(state, action):
+    # Check cache first
+    cache_key = get_cache_key(model_id, task_description, llm_model)
+    if cache_key in approach_cache:
+        print(f"Using cached approaches for key: {cache_key}")
+        cached_approaches = approach_cache[cache_key]
+        return {
+            "approaches": cached_approaches,
+            "llm_model_used": llm_model,
+            "cached": True
+        }
+    
+    try:
+        # Parse model_id to get scene_name
+        scene_name = model_id  # model_id is actually the scene name
+        
+        # Generate policy with the specified LLM
+        print(f"🎯 Generating approaches with {llm_model} for task: {task_description}")
+        
+        policy_request = PolicyGenerationRequest(
+            prompt=task_description,
+            scene_name=scene_name,
+            model=llm_model,
+            temperature=0.7
+        )
+        
+        policy_response = await generate_policy(policy_request)
+        
+        # Transform reward functions into approaches
+        approaches = []
+        for reward_fn in policy_response.reward_functions:
+            approach = {
+                "name": reward_fn.name.replace("_", " ").title(),
+                "description": f"{reward_fn.type.capitalize()} reward approach for {task_description}",
+                "reward_code": reward_fn.reward
+            }
+            approaches.append(approach)
+        
+        # Cache the results
+        approach_cache[cache_key] = approaches
+        print(f"Cached {len(approaches)} approaches for key: {cache_key}")
+        
+        return {
+            "approaches": approaches[:num_approaches],
+            "llm_model_used": llm_model,
+            "cached": False
+        }
+
+    except Exception as e:
+        # Fallback to mock data if generation fails
+        print(f"Policy generation failed: {str(e)}, using mock data")
+        approaches = []
+        approach_types = ["rhythmic", "smooth", "energetic"]
+        
+        for i in range(num_approaches):
+            approach = {
+                "name": f"{approach_types[i].capitalize()} {task_description.split()[0].capitalize()}",
+                "description": f"A {approach_types[i]} approach to {task_description}",
+                "reward_code": f"""def reward_fn(state, action):
     # {approach_types[i].capitalize()} reward for {task_description}
     base_reward = 1.0
     # Add specific reward logic here
     return base_reward"""
+            }
+            approaches.append(approach)
+        
+        return {
+            "approaches": approaches,
+            "llm_model_used": "Mock",
+            "cached": False
         }
-        approaches.append(approach)
-    
-    return {"approaches": approaches}
 
 @app.post("/api/training/batch")
 async def start_batch_training(request: dict):
@@ -770,17 +929,17 @@ async def start_batch_training(request: dict):
                 "modal_job": job
             }
         
-        return {"jobs": jobs}
+        return Response(content={"jobs": jobs}, media_type="application/json")
         
     except Exception as e:
         logger.error(f"Failed to start batch training: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.get("/api/training/{job_id}/status")
 async def get_job_status(job_id: str):
     """Get status of a Modal training job"""
     if job_id not in training_status:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail={"error": "Job not found"})
     
     job_info = training_status[job_id]
     modal_job = job_info.get("modal_job")
@@ -800,7 +959,7 @@ async def get_job_status(job_id: str):
             job_info["status"] = "failed"
             job_info["error"] = str(e)
     
-    return job_info
+    return Response(content=job_info, media_type="application/json")
 
 @app.post("/api/training/render")
 async def render_training_video(request: dict):
@@ -815,7 +974,10 @@ async def render_training_video(request: dict):
     # You would actually run:
     # python render_brax_model.py --model_path {model_path} --output {video_path}
     
-    return {"video_url": video_url}
+    return Response(content={"video_url": video_url}, media_type="application/json")
+
+training_jobs = {}
+training_status = {}
 
 if __name__ == "__main__":
     print("🚀 Starting TabRL Backend...")
