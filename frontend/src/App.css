@@ -338,7 +338,13 @@
   border-radius: 4px;
   padding: 1rem;
   font-size: 0.85rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  text-align: left !important;
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 300px;
   margin-top: 0.5rem;
 }
 

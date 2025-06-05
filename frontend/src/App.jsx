@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
 
 function App() {
@@ -104,9 +104,14 @@ function InferencePanel() {
 
 function TrainingPanel() {
   const [taskDescription, setTaskDescription] = useState('');
-  const [selectedScene, setSelectedScene] = useState('manipulation/universal_robots_ur5e');
-  const [selectedModel, setSelectedModel] = useState('claude-3-5-sonnet-20241022');
+  const [selectedScene, setSelectedScene] = useState('');
+  const [selectedModel, setSelectedModel] = useState('');
   const [episodes, setEpisodes] = useState(50);
+  
+  // Dynamic data from API
+  const [scenes, setScenes] = useState([]);
+  const [models, setModels] = useState([]);
+  const [loadingData, setLoadingData] = useState(true);
   
   // Policy generation state
   const [rewardApproaches, setRewardApproaches] = useState([]);
@@ -117,19 +122,55 @@ function TrainingPanel() {
   const [activeTrainings, setActiveTrainings] = useState([]);
   const [trainingLogs, setTrainingLogs] = useState({});
 
-  const scenes = [
-    'manipulation/universal_robots_ur5e',
-    'locomotion/anymal_c',
-    'humanoids/unitree_g1',
-    'hands/shadow_hand'
-  ];
+  // Fetch scenes and models on component mount
+  React.useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Fetch available scenes
+        const scenesResponse = await fetch('http://localhost:8000/api/scenes');
+        const scenesData = await scenesResponse.json();
+        
+        // Flatten scenes from categories
+        const allScenes = [];
+        Object.entries(scenesData.scenes).forEach(([category, sceneList]) => {
+          sceneList.forEach(scene => {
+            allScenes.push({
+              id: `${category}/${scene.name}`,
+              name: `${scene.name} (${category})`,
+              category: category
+            });
+          });
+        });
+        setScenes(allScenes);
+        
+        // Set default scene
+        if (allScenes.length > 0) {
+          setSelectedScene(allScenes[0].id);
+        }
+        
+        // Fetch available models
+        const modelsResponse = await fetch('http://localhost:8000/api/models/llm');
+        const modelsData = await modelsResponse.json();
+        
+        const modelsList = Object.entries(modelsData.models).map(([id, info]) => ({
+          id,
+          name: info.name,
+          provider: info.provider
+        }));
+        setModels(modelsList);
+        
+        // Set default model to current
+        setSelectedModel(modelsData.current);
+        
+        setLoadingData(false);
+      } catch (error) {
+        console.error('Failed to fetch data:', error);
+        setLoadingData(false);
+      }
+    };
 
-  const models = [
-    'claude-3-5-sonnet-20241022',
-    'gpt-4o',
-    'gemini-1.5-pro',
-    'deepseek-chat'
-  ];
+    fetchData();
+  }, []);
 
   const generatePolicies = async () => {
     if (!taskDescription.trim()) {
@@ -144,45 +185,39 @@ function TrainingPanel() {
     });
 
     setGeneratingPolicies(true);
+    setRewardApproaches([]);
+    setSelectedReward(null);
+
     try {
       const response = await fetch('http://localhost:8000/api/policy/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           prompt: taskDescription,
           scene_name: selectedScene,
           model: selectedModel
-        })
+        }),
       });
 
-      console.log('📡 Response status:', response.status);
-      const data = await response.json();
-      console.log('📦 Response data:', data);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
 
-      if (response.ok) {
-        console.log('✅ Policy generation successful:', data.reward_functions?.length || 0, 'reward functions');
-        
-        // Parse raw_response if reward_functions are embedded there
-        let rewardFunctions = data.reward_functions || [];
-        if (!rewardFunctions.length && data.raw_response) {
-          try {
-            const parsedResponse = JSON.parse(data.raw_response);
-            rewardFunctions = parsedResponse.reward_functions || [];
-            console.log('📋 Parsed from raw_response:', rewardFunctions.length, 'reward functions');
-          } catch (e) {
-            console.error('Failed to parse raw_response:', e);
-          }
-        }
-        
-        setRewardApproaches(rewardFunctions);
-        setSelectedReward(null);
+      const data = await response.json();
+      console.log('✅ Policy generation complete:', data);
+
+      if (data.reward_functions && Array.isArray(data.reward_functions)) {
+        setRewardApproaches(data.reward_functions);
+        console.log(`Found ${data.reward_functions.length} reward approaches`);
       } else {
-        console.error('❌ Policy generation failed:', data);
-        alert(`Policy generation failed: ${data.detail || 'Unknown error'}`);
+        console.error('❌ No reward_functions array found:', data);
+        alert('Policy generation succeeded but no reward functions were returned');
       }
     } catch (error) {
-      console.error('🔥 Network error:', error);
-      alert(`Error: ${error.message}`);
+      console.error('❌ Policy generation failed:', error);
+      alert(`Policy generation failed: ${error.message}`);
     } finally {
       setGeneratingPolicies(false);
     }
@@ -194,39 +229,54 @@ function TrainingPanel() {
       return;
     }
 
+    console.log('🚀 Starting training with reward:', selectedReward.name);
+
     try {
+      const trainingRequest = {
+        task_description: taskDescription,
+        scene_name: selectedScene,
+        episodes: episodes
+      };
+
+      console.log('Training request:', trainingRequest);
+
       const response = await fetch('http://localhost:8000/api/training/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          task_description: taskDescription,
-          scene_name: selectedScene,
-          episodes: episodes,
-          reward_code: selectedReward.reward
-        })
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(trainingRequest),
       });
 
-      const data = await response.json();
-      if (response.ok) {
-        const newTraining = {
-          id: data.training_id,
-          task: taskDescription,
-          scene: selectedScene,
-          reward_name: selectedReward.name,
-          status: 'started',
-          progress: 0,
-          episode: 0,
-          reward: 0,
-          loss: null
-        };
-        
-        setActiveTrainings(prev => [...prev, newTraining]);
-        pollTrainingStatus(data.training_id);
-      } else {
-        alert(`Training failed: ${data.detail}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
+
+      const data = await response.json();
+      console.log('✅ Training started:', data);
+
+      // Add to active trainings
+      const newTraining = {
+        id: data.training_id,
+        task: taskDescription,
+        scene: selectedScene,
+        reward_name: selectedReward.name,
+        status: 'starting',
+        progress: 0,
+        episode: 0,
+        reward: 0,
+        loss: null,
+        eta_seconds: null
+      };
+
+      setActiveTrainings(prev => [...prev, newTraining]);
+
+      // Start polling for status
+      pollTrainingStatus(data.training_id);
+
     } catch (error) {
-      alert(`Error: ${error.message}`);
+      console.error('❌ Training start failed:', error);
+      alert(`Failed to start training: ${error.message}`);
     }
   };
 
@@ -256,151 +306,161 @@ function TrainingPanel() {
 
   return (
     <div className="panel">
-      <h2>🏋️ Training Pipeline</h2>
+      <h2>🚀 Training</h2>
+      <p>Generate reward functions, select an approach, and start RL training</p>
       
-      {/* Step 1: Task & Scene Configuration */}
-      <div className="training-step">
-        <h3>1. Task Configuration</h3>
-        <div className="form-group">
-          <label>Task Description:</label>
-          <textarea
-            value={taskDescription}
-            onChange={(e) => setTaskDescription(e.target.value)}
-            placeholder="Describe what you want the robot to do..."
-            rows={3}
-          />
+      {loadingData ? (
+        <div className="loading-state">
+          <p>Loading scenes and models...</p>
         </div>
-        
-        <div className="form-row">
-          <div className="form-group">
-            <label>Scene:</label>
-            <select value={selectedScene} onChange={(e) => setSelectedScene(e.target.value)}>
-              {scenes.map(scene => (
-                <option key={scene} value={scene}>{scene}</option>
-              ))}
-            </select>
-          </div>
-          
-          <div className="form-group">
-            <label>LLM Model:</label>
-            <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-              {models.map(model => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </select>
-          </div>
-          
-          <div className="form-group">
-            <label>Episodes:</label>
-            <input
-              type="number"
-              value={episodes}
-              onChange={(e) => setEpisodes(Number(e.target.value))}
-              min="1"
-              max="1000"
-            />
-          </div>
-        </div>
-        
-        <button 
-          onClick={generatePolicies} 
-          disabled={generatingPolicies || !taskDescription.trim()}
-          className="primary-button"
-        >
-          {generatingPolicies ? 'Generating Reward Approaches...' : 'Generate Reward Approaches'}
-        </button>
-      </div>
-
-      {/* Step 2: Reward Approach Selection */}
-      {rewardApproaches.length > 0 && (
-        <div className="training-step">
-          <h3>2. Select Reward Approach</h3>
-          <p>Found {rewardApproaches.length} reward functions:</p>
-          <div className="reward-approaches">
-            {rewardApproaches.map((reward, index) => (
-              <div 
-                key={index}
-                className={`reward-card ${selectedReward === reward ? 'selected' : ''}`}
-                onClick={() => setSelectedReward(reward)}
-              >
-                <h4>{reward.name || `Reward Function ${index + 1}`}</h4>
-                <p className="reward-type">{reward.type || 'Unknown'}</p>
-                <p className="reward-description">
-                  {reward.description || `${reward.type} reward approach for ${reward.name}`}
-                </p>
-                <details>
-                  <summary>View Code</summary>
-                  <pre className="reward-code">{reward.reward || 'No code available'}</pre>
-                </details>
+      ) : (
+        <>
+          {/* Step 1: Policy Generation */}
+          <div className="training-step">
+            <h3>1. Generate Reward Approaches</h3>
+            
+            <div className="form-group">
+              <label>Task Description:</label>
+              <textarea
+                value={taskDescription}
+                onChange={(e) => setTaskDescription(e.target.value)}
+                placeholder="Describe what you want the robot to do..."
+                rows={3}
+              />
+            </div>
+            
+            <div className="form-row">
+              <div className="form-group">
+                <label>Scene:</label>
+                <select value={selectedScene} onChange={(e) => setSelectedScene(e.target.value)}>
+                  {scenes.map(scene => (
+                    <option key={scene.id} value={scene.id}>{scene.name}</option>
+                  ))}
+                </select>
               </div>
-            ))}
+              
+              <div className="form-group">
+                <label>LLM Model:</label>
+                <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+                  {models.map(model => (
+                    <option key={model.id} value={model.id}>{model.name}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="form-group">
+                <label>Training Episodes:</label>
+                <input
+                  type="number"
+                  value={episodes}
+                  onChange={(e) => setEpisodes(parseInt(e.target.value))}
+                  min="1"
+                  max="1000"
+                />
+              </div>
+            </div>
+            
+            <button 
+              onClick={generatePolicies}
+              disabled={generatingPolicies || !taskDescription.trim()}
+              className="primary-button"
+            >
+              {generatingPolicies ? 'Generating Reward Approaches...' : 'Generate Reward Approaches'}
+            </button>
           </div>
           
-          <button 
-            onClick={startTraining} 
-            disabled={!selectedReward}
-            className="primary-button"
-          >
-            Start Training with {selectedReward?.name}
-          </button>
-        </div>
-      )}
-
-      {/* Step 3: Training Progress */}
-      {activeTrainings.length > 0 && (
-        <div className="training-step">
-          <h3>3. Training Progress</h3>
-          <div className="training-jobs">
-            {activeTrainings.map(training => (
-              <div key={training.id} className="training-job">
-                <div className="job-header">
-                  <h4>{training.task}</h4>
-                  <span className={`status ${training.status}`}>{training.status}</span>
-                </div>
-                
-                <div className="job-details">
-                  <p><strong>Scene:</strong> {training.scene}</p>
-                  <p><strong>Reward:</strong> {training.reward_name}</p>
-                  <p><strong>ID:</strong> {training.id}</p>
-                </div>
-                
-                {training.status === 'training' && (
-                  <div className="progress-section">
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{ width: `${(training.progress || 0) * 100}%` }}
-                      ></div>
-                    </div>
-                    <div className="progress-stats">
-                      <span>Episode: {training.episode}/{episodes}</span>
-                      <span>Reward: {training.reward?.toFixed(2) || 0}</span>
-                      <span>Loss: {training.loss?.toFixed(4) || 'N/A'}</span>
-                      <span>ETA: {training.eta_seconds || 0}s</span>
-                    </div>
+          {/* Step 2: Reward Approach Selection */}
+          {rewardApproaches.length > 0 && (
+            <div className="training-step">
+              <h3>2. Select Reward Approach</h3>
+              <p>Found {rewardApproaches.length} reward functions:</p>
+              <div className="reward-approaches">
+                {rewardApproaches.map((reward, index) => (
+                  <div 
+                    key={index}
+                    className={`reward-card ${selectedReward === reward ? 'selected' : ''}`}
+                    onClick={() => setSelectedReward(reward)}
+                  >
+                    <h4>{reward.name || `Reward Function ${index + 1}`}</h4>
+                    <p className="reward-type">{reward.type || 'Unknown'}</p>
+                    <p className="reward-description">
+                      {reward.description || `${reward.type} reward approach for ${reward.name}`}
+                    </p>
+                    <details>
+                      <summary>View Code</summary>
+                      <pre className="reward-code">{reward.reward || 'No code available'}</pre>
+                    </details>
                   </div>
-                )}
-                
-                {training.status === 'completed' && (
-                  <div className="completion-section">
-                    <p>✅ Training completed!</p>
-                    <p><strong>Final Reward:</strong> {training.reward?.toFixed(2)}</p>
-                    {training.model_path && (
-                      <p><strong>Model:</strong> {training.model_path}</p>
+                ))}
+              </div>
+              
+              <button 
+                onClick={startTraining} 
+                disabled={!selectedReward}
+                className="primary-button"
+              >
+                Start Training with {selectedReward?.name}
+              </button>
+            </div>
+          )}
+
+          {/* Step 3: Training Progress */}
+          {activeTrainings.length > 0 && (
+            <div className="training-step">
+              <h3>3. Training Progress</h3>
+              <div className="training-jobs">
+                {activeTrainings.map(training => (
+                  <div key={training.id} className="training-job">
+                    <div className="job-header">
+                      <h4>{training.task}</h4>
+                      <span className={`status ${training.status}`}>{training.status}</span>
+                    </div>
+                    
+                    <div className="job-details">
+                      <p><strong>Scene:</strong> {training.scene}</p>
+                      <p><strong>Reward:</strong> {training.reward_name}</p>
+                      <p><strong>ID:</strong> {training.id}</p>
+                    </div>
+                    
+                    {training.status === 'training' && (
+                      <div className="progress-section">
+                        <div className="progress-bar">
+                          <div 
+                            className="progress-fill" 
+                            style={{ width: `${(training.progress || 0) * 100}%` }}
+                          ></div>
+                        </div>
+                        <div className="progress-stats">
+                          <span>Episode: {training.episode}/{episodes}</span>
+                          <span>Reward: {training.reward?.toFixed(2) || 0}</span>
+                          <span>Loss: {training.loss?.toFixed(4) || 'N/A'}</span>
+                          <span>ETA: {training.eta_seconds || 0}s</span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {training.status === 'completed' && (
+                      <div className="completion-section">
+                        <p>✅ Training completed!</p>
+                        <p><strong>Final Reward:</strong> {training.reward?.toFixed(2)}</p>
+                        {training.model_path && (
+                          <p><strong>Model:</strong> {training.model_path}</p>
+                        )}
+                      </div>
+                    )}
+                    
+                    {training.status === 'failed' && (
+                      <div className="error-section">
+                        <p>❌ Training failed</p>
+                        {training.error && <p><strong>Error:</strong> {training.error}</p>}
+                      </div>
                     )}
                   </div>
-                )}
-                
-                {training.status === 'failed' && (
-                  <div className="error-section">
-                    <p>❌ Training failed</p>
-                    {training.error && <p><strong>Error:</strong> {training.error}</p>}
-                  </div>
-                )}
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

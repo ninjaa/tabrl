@@ -163,7 +163,14 @@ Create:
 2. Multiple diverse reward_functions (dense, sparse, shaped types)
 3. Use semantic functions like get_joint_angle(), get_body_position(), get_contact_forces()
 
-Make the reward functions realistic and task-specific."""
+CRITICAL: Each reward function MUST be a complete Python function definition like:
+```python
+def compute_reward():
+    # Reward computation logic here
+    return reward_value
+```
+
+Make the reward functions realistic and task-specific. Each reward function should be self-contained and properly formatted Python code."""
 
         try:
             # Create messages for LiteLLM
