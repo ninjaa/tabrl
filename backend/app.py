@@ -4,10 +4,12 @@ Handles inference, training, and model management
 """
 
 import os
+import time
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, List, Dict
 import asyncio
 import json
+import re
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,13 @@ import uvicorn
 from inference import InferenceEngine
 from training import TrainingEngine
 from scene_parser import parse_scene_xml, generate_llm_context
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Debug flag
+DEBUG_LLM_RESPONSES = os.getenv("DEBUG_LLM_RESPONSES", "false").lower() == "true"
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -62,7 +71,20 @@ class ModelSelectionRequest(BaseModel):
 class PolicyGenerationRequest(BaseModel):
     prompt: str                    # "Pick up the red block"
     scene_name: str               # "manipulation/universal_robots_ur5e"  
-    model: Optional[str] = None   # LLM model override
+    model: Optional[str] = "claude-3-5-sonnet-20241022"   # LLM model override
+
+class RewardFunction(BaseModel):
+    name: str
+    type: str  # "dense", "sparse", or "shaped"
+    reward: str  # Python code for reward calculation
+
+class PolicyGenerationResponse(BaseModel):
+    task: str
+    scene: str
+    policy_code: str
+    reward_functions: List[RewardFunction]
+    observation_space: int
+    action_space: int
 
 @app.get("/")
 async def root():
@@ -203,11 +225,11 @@ async def get_current_model():
         "info": inference_engine.get_available_models().get(inference_engine.get_current_model(), {})
     }
 
-@app.post("/api/policy/generate")
+@app.post("/api/policy/generate", response_model=PolicyGenerationResponse)
 async def generate_policy(request: PolicyGenerationRequest):
-    """Generate policy with multiple reward approaches using scene context"""
+    """Generate RL policy and reward functions for the given task"""
     try:
-        # Parse scene XML to get structure
+        # Parse the scene to get structure
         scenes_dir = Path(__file__).parent.parent / "scenes"
         scene_path = scenes_dir / request.scene_name
         
@@ -222,79 +244,94 @@ async def generate_policy(request: PolicyGenerationRequest):
         if not xml_file:
             raise HTTPException(status_code=404, detail=f"Scene XML not found for {request.scene_name}")
         
-        # Parse scene structure
         scene_structure = parse_scene_xml(str(xml_file))
         
-        # Generate LLM context with scene information
+        # Create context for LLM
         llm_context = generate_llm_context(scene_structure, request.prompt)
         
-        # Create enhanced prompt for multi-reward generation
-        enhanced_prompt = f"""
-Design a set of reward functions that encourage the robot to learn a policy that successfully completes the task: {request.prompt}. 
-Consider the scene structure, the task requirements, and the robot's capabilities when designing the rewards. 
-The reward functions should be diverse and encourage exploration, yet still guide the robot towards the task goal.
-
-Scene context:
-{llm_context}
-
-Example reward structure:
-{{
-    "reward_functions": [
-        {{
-            "name": "distance_to_goal",
-            "type": "sparse",
-            "reward": "-0.1 * distance_to_goal"
-        }},
-        {{
-            "name": "joint_limit_penalty",
-            "type": "dense",
-            "reward": "-0.01 * (joint_limit_penalty)"
-        }},
-        {{
-            "name": "task_completion",
-            "type": "sparse",
-            "reward": "1.0 * (task_completion)"
-        }}
-    ]
-}}
-
-Return this JSON structure:
-{{
-    "task": "{request.prompt}",
-    "scene": "{scene_structure.name}",
-    "policy_code": "# Main policy neural network code",
-    "reward_functions": [...],
-    "observation_space": {scene_structure.nq + scene_structure.nv},
-    "action_space": {scene_structure.nu}
-}}"""
+        # Use structured JSON generation with schema validation
+        policy_data = await inference_engine.generate_structured_policy(
+            prompt=request.prompt,
+            obs_space=scene_structure.nq + scene_structure.nv,
+            action_space=scene_structure.nu,
+            scene_context=llm_context,
+            model=request.model
+        )
         
-        # Generate policy using LLM
-        response_text = ""
-        async for chunk in inference_engine.generate_policy(enhanced_prompt, model=request.model):
-            response_text += chunk
+        # DEBUG: Log raw LLM response to file for inspection
+        if DEBUG_LLM_RESPONSES:
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            debug_file = f"debug_llm_response_{timestamp}.json"
+            
+            print(f"🔍 DEBUG: Raw LLM response type: {type(policy_data)}")
+            print(f"🔍 DEBUG: Raw LLM response keys: {list(policy_data.keys()) if isinstance(policy_data, dict) else 'Not a dict'}")
+            
+            # Check reward_functions specifically
+            reward_funcs = policy_data.get("reward_functions")
+            print(f"🔍 DEBUG: reward_functions type: {type(reward_funcs)}")
+            print(f"🔍 DEBUG: reward_functions length: {len(reward_funcs) if hasattr(reward_funcs, '__len__') else 'No len'}")
+            
+            # Save raw response to file
+            with open(debug_file, 'w') as f:
+                json.dump(policy_data, f, indent=2, default=str)
+            print(f"🔍 DEBUG: Raw response saved to {debug_file}")
+            
+            # If it's a string, show first 200 chars
+            if isinstance(reward_funcs, str):
+                print(f"🔍 DEBUG: reward_functions preview: {reward_funcs[:200]}...")
+            elif isinstance(reward_funcs, list):
+                print(f"🔍 DEBUG: reward_functions is already a list with {len(reward_funcs)} items")
+            else:
+                print(f"🔍 DEBUG: reward_functions is unexpected type: {type(reward_funcs)}")
         
-        # Try to parse as JSON, fallback to text response
-        try:
-            import json
-            policy_data = json.loads(response_text)
-            return policy_data
-        except:
-            # Fallback if not valid JSON
-            return {
-                "task": request.prompt,
-                "scene": scene_structure.name,
-                "raw_response": response_text,
-                "scene_structure": {
-                    "joints": scene_structure.joints,
-                    "bodies": scene_structure.bodies,
-                    "sites": scene_structure.sites,
-                    "sensors": scene_structure.sensors,
-                    "action_dim": scene_structure.nu,
-                    "state_dim": scene_structure.nq + scene_structure.nv
-                }
-            }
+        # Fix reward_functions if it's returned as a string instead of array
+        if isinstance(policy_data.get("reward_functions"), str):
+            try:
+                # First try normal JSON parsing
+                policy_data["reward_functions"] = json.loads(policy_data["reward_functions"])
+                if DEBUG_LLM_RESPONSES:
+                    print("✅ DEBUG: Standard JSON parsing successful")
+            except json.JSONDecodeError:
+                if DEBUG_LLM_RESPONSES:
+                    print("🔧 DEBUG: Standard JSON failed, trying triple-quote fix...")
+                try:
+                    import re
+                    
+                    def escape_triple_quoted_content(match):
+                        content = match.group(1)
+                        # Escape quotes and newlines for JSON
+                        escaped = content.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                        return f'"{escaped}"'
+                    
+                    # Fix """content""" -> "escaped_content"
+                    reward_str = policy_data["reward_functions"]
+                    pattern = r'"""(.*?)"""'
+                    fixed_str = re.sub(pattern, escape_triple_quoted_content, reward_str, flags=re.DOTALL)
+                    
+                    policy_data["reward_functions"] = json.loads(fixed_str)
+                    if DEBUG_LLM_RESPONSES:
+                        print("✅ DEBUG: Triple-quote fix successful")
+                except Exception as e:
+                    if DEBUG_LLM_RESPONSES:
+                        print(f"❌ DEBUG: Triple-quote fix failed: {e}")
+                    policy_data["reward_functions"] = []
+        
+        # Ensure reward_functions is always an array
+        if not isinstance(policy_data.get("reward_functions"), list):
+            policy_data["reward_functions"] = []
+        
+        return PolicyGenerationResponse(
+            task=request.prompt,
+            scene=request.scene_name,
+            policy_code=policy_data["policy_code"],
+            reward_functions=[RewardFunction(**reward_func) for reward_func in policy_data["reward_functions"]],
+            observation_space=scene_structure.nq + scene_structure.nv,
+            action_space=scene_structure.nu
+        )
         
     except Exception as e:
+        print(f"Policy generation error: {e}")
         raise HTTPException(status_code=500, detail=f"Policy generation failed: {str(e)}")
 
 if __name__ == "__main__":

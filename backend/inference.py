@@ -25,6 +25,8 @@ class InferenceEngine:
     
     # Available models with their providers
     AVAILABLE_MODELS = {
+        "claude-sonnet-4-20250514": {"provider": "anthropic", "name": "Claude 4 Sonnet"},
+        "claude-opus-4-20250514": {"provider": "anthropic", "name": "Claude 4 Opus"},
         "claude-3-5-sonnet-20241022": {"provider": "anthropic", "name": "Claude 3.5 Sonnet"},
         "gpt-4o": {"provider": "openai", "name": "GPT-4o"},
         "gemini/gemini-1.5-pro": {"provider": "google", "name": "Gemini 1.5 Pro"},
@@ -32,7 +34,7 @@ class InferenceEngine:
     }
     
     def __init__(self):
-        self.current_model = "claude-3-5-sonnet-20241022"  # Default to Claude
+        self.current_model = "claude-sonnet-4-20250514"  # Default to Claude 4 Sonnet
         self.onnx_sessions = {}  # Cache for loaded ONNX models
         
         # Load environment variables
@@ -115,6 +117,94 @@ Format your response as valid Python code with detailed explanations of the appr
                 yield f"❌ API key error for {provider}. Please check your .env file for the required API key."
             else:
                 yield f"❌ Error generating policy with {model_to_use}: {error_msg}"
+    
+    async def generate_structured_policy(self, prompt: str, obs_space: int, action_space: int, scene_context: str, model: Optional[str] = None) -> dict:
+        """Generate structured policy response with JSON schema validation"""
+        
+        if not LITELLM_AVAILABLE:
+            raise Exception("LiteLLM not available. Please install litellm.")
+        
+        # Use specified model or current default
+        model_to_use = model if model and model in self.AVAILABLE_MODELS else self.current_model
+        
+        # Define the JSON schema for policy response
+        policy_schema = {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string"},
+                "scene": {"type": "string"},
+                "policy_code": {"type": "string"},
+                "reward_functions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "type": {"type": "string", "enum": ["dense", "sparse", "shaped"]},
+                            "reward": {"type": "string"}
+                        },
+                        "required": ["name", "type", "reward"]
+                    }
+                },
+                "observation_space": {"type": "integer"},
+                "action_space": {"type": "integer"}
+            },
+            "required": ["task", "scene", "policy_code", "reward_functions", "observation_space", "action_space"]
+        }
+        
+        # System prompt for structured policy generation
+        system_prompt = f"""You are an expert robotics engineer. Generate a comprehensive policy for the given robotics task.
+
+Scene context:
+{scene_context}
+
+Create:
+1. A complete policy_code implementation (PolicyNetwork class with forward method)
+2. Multiple diverse reward_functions (dense, sparse, shaped types)
+3. Use semantic functions like get_joint_angle(), get_body_position(), get_contact_forces()
+
+Make the reward functions realistic and task-specific."""
+
+        try:
+            # Create messages for LiteLLM
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Task: {prompt}"}
+            ]
+            
+            # Generate structured response using JSON schema
+            response = await litellm.acompletion(
+                model=model_to_use,
+                messages=messages,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "policy_response",
+                        "schema": policy_schema,
+                        "strict": True
+                    }
+                },
+                max_tokens=4096,
+                temperature=0.1
+            )
+            
+            # Parse the structured response
+            import json
+            policy_data = json.loads(response.choices[0].message.content)
+            
+            # Ensure correct dimensions
+            policy_data["observation_space"] = obs_space
+            policy_data["action_space"] = action_space
+            
+            return policy_data
+                    
+        except Exception as e:
+            error_msg = str(e)
+            if "API key" in error_msg.lower():
+                provider = self.AVAILABLE_MODELS.get(model_to_use, {}).get("provider", "unknown")
+                raise Exception(f"API key error for {provider}. Please check your .env file for the required API key.")
+            else:
+                raise Exception(f"Error generating structured policy with {model_to_use}: {error_msg}")
     
     def load_onnx_model(self, model_path: str) -> bool:
         """Load an ONNX model for inference"""
