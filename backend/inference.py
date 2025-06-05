@@ -153,24 +153,48 @@ Format your response as valid Python code with detailed explanations of the appr
         }
         
         # System prompt for structured policy generation
-        system_prompt = f"""You are an expert robotics engineer. Generate a comprehensive policy for the given robotics task.
+        system_prompt = f"""You are an expert robotics engineer. Generate a comprehensive policy for the given robotics task using Brax/JAX.
 
 Scene context:
 {scene_context}
 
 Create:
 1. A complete policy_code implementation (PolicyNetwork class with forward method)
-2. Multiple diverse reward_functions (dense, sparse, shaped types)
-3. Use semantic functions like get_joint_angle(), get_body_position(), get_contact_forces()
+2. Multiple diverse reward_functions (dense, sparse, shaped types) compatible with Brax
 
-CRITICAL: Each reward function MUST be a complete Python function definition like:
+CRITICAL: Each reward function MUST follow the Brax reward function signature:
 ```python
-def compute_reward():
-    # Reward computation logic here
-    return reward_value
+def reward_fn(state, action):
+    # state is a Brax PipelineState object with:
+    # - state.q: joint positions (array)
+    # - state.qd: joint velocities (array)
+    # - state.x.pos: body positions (array of 3D positions)
+    # - state.x.rot: body rotations (array of quaternions)
+    # - state.xd.vel: body linear velocities (array of 3D velocities)
+    # - state.xd.ang: body angular velocities (array of 3D velocities)
+    
+    # Example accessing root body (index 0) forward velocity:
+    # forward_velocity = state.xd.vel[0, 0]  # x-velocity
+    
+    # Example accessing root body height:
+    # height = state.x.pos[0, 2]  # z-position
+    
+    # Return a float reward value
+    return float(reward_value)
 ```
 
-Make the reward functions realistic and task-specific. Each reward function should be self-contained and properly formatted Python code."""
+Common body indices (may vary by robot):
+- 0: root/torso/base
+- 1-4: legs/arms attachments
+- Check scene XML for exact body names and ordering
+
+Common reward patterns:
+- Forward progress: state.xd.vel[0, 0] (x-velocity of root)
+- Upright bonus: state.x.pos[0, 2] (height) * (1 - abs(state.x.rot[0, 1])) (penalize tilt)
+- Energy penalty: -0.001 * jnp.sum(action**2)
+- Contact forces: Use state.contact if available
+
+Make the reward functions realistic and task-specific. Each reward function should be self-contained and properly formatted Python code that works with Brax state objects."""
 
         try:
             # Create messages for LiteLLM

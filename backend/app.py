@@ -273,22 +273,49 @@ async def get_playground_info_endpoint(category: str, env_name: str):
 async def generate_policy(request: PolicyGenerationRequest):
     """Generate RL policy and reward functions for the given task"""
     try:
-        # Parse the scene to get structure
-        scenes_dir = Path(__file__).parent.parent / "scenes"
-        scene_path = scenes_dir / request.scene_name
+        scene_structure = None
+        xml_content = None
         
-        # Try different XML file names
-        xml_files = ["scene.xml", "robot.xml", "ur5e.xml", "scene_left.xml", "scene_right.xml"]
-        xml_file = None
-        for xml_name in xml_files:
-            if (scene_path / xml_name).exists():
-                xml_file = scene_path / xml_name
-                break
+        # First, check if it's a playground environment
+        if "/" not in request.scene_name:
+            # It might be a playground environment without category prefix
+            # Try to find it in available environments
+            environments = get_available_environments()
+            
+            # Search across all categories
+            for category, envs in environments.items():
+                if request.scene_name in envs:
+                    # Found it! Get the XML
+                    xml_content = get_environment_xml(category, request.scene_name)
+                    if xml_content:
+                        # Parse the XML content directly
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                            f.write(xml_content)
+                            temp_path = f.name
+                        
+                        scene_structure = parse_scene_xml(temp_path)
+                        import os
+                        os.unlink(temp_path)
+                    break
         
-        if not xml_file:
-            raise HTTPException(status_code=404, detail=f"Scene XML not found for {request.scene_name}")
-        
-        scene_structure = parse_scene_xml(str(xml_file))
+        # If not found as playground env, try local scenes directory
+        if scene_structure is None:
+            scenes_dir = Path(__file__).parent.parent / "scenes"
+            scene_path = scenes_dir / request.scene_name
+            
+            # Try different XML file names
+            xml_files = ["scene.xml", "robot.xml", "ur5e.xml", "scene_left.xml", "scene_right.xml"]
+            xml_file = None
+            for xml_name in xml_files:
+                if (scene_path / xml_name).exists():
+                    xml_file = scene_path / xml_name
+                    break
+            
+            if xml_file:
+                scene_structure = parse_scene_xml(str(xml_file))
+            else:
+                raise HTTPException(status_code=404, detail=f"Scene not found: {request.scene_name}")
         
         # Create context for LLM
         llm_context = generate_llm_context(scene_structure, request.prompt)

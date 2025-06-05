@@ -1,119 +1,118 @@
 # MuJoCo Browser Training Platform - PRD
 
 ## 🎯 Product Vision
-Build a browser-based robotics training platform where users can teach robots new behaviors using natural language. Uses FastAPI backend for LLM integration and training, with MuJoCo WASM + ONNX inference in the browser.
+Build a browser-based robotics training platform where users can teach robots new behaviors using natural language. Uses FastAPI backend for LLM integration and training, with MuJoCo WASM simulation and server-side JAX inference.
 
-## 📁 Current Architecture (Updated)
+## 📐 Architecture Overview
 
-### Backend (FastAPI) 
-- **Location**: `/backend/`
-- **Key Files**:
-  - `app.py` - FastAPI server with CORS for frontend
-  - `inference.py` - LiteLLM integration for multi-provider LLM support
-  - `training.py` - RL training engine with MuJoCo simulation
-  - `scene_parser.py` - XML parsing and robot structure analysis
-  - `rl_training.py` - PPO implementation with reward function compilation
-
-### Frontend (React + Three.js)
-- **Location**: `/frontend/`  
-- **Key Files**:
-  - `src/App.jsx` - Main React app with training pipeline UI
-  - `src/App.css` - Modern styling with light/dark themes
-  - Vite build system for fast development
-
-### Scene Library Structure
 ```
-/scenes/
-├── manipulation/
-│   ├── universal_robots_ur5e/
-│   │   ├── scene.xml
-│   │   ├── ur5e.xml (included robot)
-│   │   └── meshes/...
-├── locomotion/
-│   ├── anybotics_anymal_c/
-│   │   ├── scene.xml
-│   │   └── meshes/...
-├── humanoids/
-│   ├── unitree_g1/
-│   │   ├── scene.xml
-│   │   └── meshes/...
-└── hands/
-    ├── shadow_hand/
-        ├── scene.xml
-        └── meshes/...
+┌─────────────────────────────────────────────────────────────────┐
+│                          Frontend (React)                         │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐    │
+│  │   Scene     │  │   Training   │  │    MuJoCo WASM      │    │
+│  │  Selector   │  │   Progress   │  │    Simulation       │    │
+│  └─────────────┘  └──────────────┘  └─────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                │ API Calls + WebSocket
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Backend (FastAPI)                            │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐    │
+│  │     LLM     │  │   Training   │  │   JAX Inference     │    │
+│  │ Integration │  │   Engine     │  │    (Server-side)    │    │
+│  └─────────────┘  └──────────────┘  └─────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                │ GPU Training
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Modal (Serverless GPU)                       │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐    │
+│  │ Brax/JAX    │  │   Model      │  │    Training         │    │
+│  │  Training   │  │   Storage    │  │    Container        │    │
+│  └─────────────┘  └──────────────┘  └─────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### MuJoCo WASM Integration (Future)
-- **Location**: `/mujoco-wasm-build/` (planned)
-- **Purpose**: Browser-based simulation and ONNX inference
-- **Current Status**: Backend simulation, WASM integration planned
+## 🔧 Technical Stack
 
-## 🏗️ Technical Architecture (Updated - Brax/JAX Integration)
+### Backend (FastAPI)
+- **Purpose**: LLM integration, training orchestration, model inference
+- **Key Features**:
+   - Multi-provider LLM support (Claude, GPT-4, Gemini, DeepSeek)
+   - Reward function generation from natural language
+   - Scene management and MuJoCo XML parsing
+   - WebSocket streaming for real-time JAX inference
+   - Modal integration for GPU training
 
-### Core Components
-
-1. **Frontend (React + Vite)**
-   - Dynamic scene and model selection via API
+### Frontend (React + Vite)
+- **Purpose**: Browser-based simulation and control interface
+- **Key Features**:
+   - Scene selection and visualization
    - Natural language task input
-   - Reward function display and selection
-   - Real-time training progress visualization
-   - **MuJoCo WASM + ONNX.js inference** (browser-based policy execution)
+   - Training progress monitoring
+   - **MuJoCo WASM simulation** (robot visualization)
+   - WebSocket client for real-time inference
 
-2. **FastAPI Backend**
-   - Multi-provider LLM integration (Claude, GPT-4, Gemini, DeepSeek)
-   - **JAX/Brax training pipeline** (GPU-accelerated on Modal)
-   - Scene parsing and robot structure analysis
-   - **ONNX model export** from JAX/Flax policies
-   - Progress tracking and status polling
+### Training (Modal + Brax)
+- **Purpose**: GPU-accelerated RL training
+- **Key Features**:
+   - Brax PPO training with JAX acceleration
+   - **JAX/Flax policy models**
+   - GPU containers (H100 for speed)
+   - Model storage in Modal volumes
+   - 7-minute target for locomotion policies
+   - Server-side JAX inference (dependency compatibility)
 
-3. **Training Pipeline (New Architecture)**
-   - Scene-aware policy generation via LLM
-   - Multiple reward approaches (dense, sparse, shaped)
-   - **Brax PPO training** (7-minute locomotion policies)
-   - **Modal GPU deployment** for distributed training
-   - Automatic ONNX export for browser inference
+## 📝 API Endpoints
 
-### API Endpoints (Updated)
 ```
-GET  /api/scenes                 - List available robot scenes
-GET  /api/models/llm            - List available LLM models  
-POST /api/model/select          - Switch LLM models
-GET  /api/model/current         - Get current LLM model
-POST /api/policy/generate       - Generate reward functions from natural language
-POST /api/training/start        - Start Brax training job on Modal GPU
-GET  /api/training/{id}/status  - Get training progress
-GET  /api/models               - List trained ONNX models
-GET  /api/models/{id}/export/onnx - Export trained policy to ONNX format
+POST /api/policy/generate      - Generate reward functions from prompts
+POST /api/training/start       - Start GPU training with reward code
+GET  /api/training/{id}/status - Get training progress
+GET  /api/playground/scenes    - List available robot scenes
+GET  /api/models               - List trained JAX models
+GET  /api/models/{id}/inference - WebSocket endpoint for JAX inference
+POST /api/llm/select           - Switch between LLM providers
 ```
 
-## 🚀 Current Status & Next Steps
+## 🚀 Implementation Phases
 
-### ✅ Completed (Phase 1-2)
-- FastAPI backend with multi-LLM support
-- Scene parsing and robot structure analysis
-- Policy generation with proper reward function wrapping
-- React frontend with dynamic data loading
-- Training progress tracking and model export
-- End-to-end pipeline validation
+### Phase 1: Core Platform ✅
+- FastAPI backend with LLM integration
+- Basic frontend with scene selection
+- Modal GPU training setup
+- MuJoCo Playground integration
 
-### 🔄 In Progress (Phase 3A - JAX/Brax Integration)
-- JAX/Brax dependency integration
-- Brax environment wrapper for existing MuJoCo scenes
-- ONNX export pipeline development
-- Local CPU testing and validation
+### Phase 2: Training Pipeline ✅
+- Brax/JAX training implementation
+- Modal container deployment
+- JAX model storage and retrieval
+- Basic inference endpoints
 
-### 📋 TODO (Phase 3B-C)
-- Modal GPU training deployment
-- MuJoCo WASM + ONNX.js frontend integration
-- Training visualization (foot trajectories, velocity tracking)
-- Policy comparison and analysis tools
-- Public deployment and demo
+### Phase 3: Browser Integration 🚧
+- MuJoCo WASM scene rendering
+- WebSocket streaming for inference
+- Real-time policy execution
+- Training visualization
 
-## 📐 Training Architecture (Updated)
+### Phase 4: Polish & Scale
+- Pre-trained model library
+- Multi-robot support
+- Advanced reward shaping
+- Performance optimization
 
-### Brax/JAX Training Stack
+## 🧠 Smart Policy Generation
+
+Generate custom robot behaviors using Brax PPO training with LLM-generated rewards:
+
 ```python
-# LLM generates reward function
+# LLM generates semantic reward function
+prompt = "Make the robot do a backflip"
+reward_code = llm.generate_reward(prompt)
+
+# Example generated reward:
 def locomotion_reward(state, action):
     base_pos = get_body_position(state, 'torso')
     return base_pos[0] * 2.0  # Forward progress
@@ -129,20 +128,19 @@ env = create_brax_env(
 make_inference_fn, params, metrics = ppo.train(
     environment=env,
     num_timesteps=30_000_000,
-    network_factory=ppo_networks.make_ppo_networks
+    num_evals=10
 )
 
-# Export to ONNX for browser inference
-export_to_onnx(params, obs_shape=(24,), action_shape=(12,))
+# Server-side JAX inference via WebSocket
+async def inference_loop(websocket, params):
+    while True:
+        obs = await websocket.receive()
+        action = inference_fn(params, obs)
+        await websocket.send(action)
 ```
 
-### Modal GPU Deployment
+### Modal Function Signature
 ```python
-# Note: GPU Hardware Configuration
-# - H100: Uses CUDA 12 - install `jax[cuda12_pip]`
-# - A100: Uses CUDA 11 - install `jax[cuda11_pip]`
-# Modal automatically detects and provisions the correct CUDA driver
-
 @modal.function(gpu="H100", timeout=600)  # 10-minute timeout
 def train_locomotion_policy(scene_name, reward_code, config):
     # Load scene in Brax
@@ -154,522 +152,204 @@ def train_locomotion_policy(scene_name, reward_code, config):
     # Train with Brax PPO
     inference_fn, params, metrics = ppo.train(env, **config)
     
-    # Export to ONNX
-    onnx_bytes = export_onnx(params, env.observation_size, env.action_size)
+    # Save JAX model params
+    model_path = save_jax_params(params, env.observation_size, env.action_size)
     
-    return onnx_bytes, metrics
+    return model_path, metrics
 ```
 
 ## 📋 User Flows (Current Implementation)
 
-### Modal Deployment & Testing
+### 1. Task Definition
+{{ ... }}
 
-#### Deploy Training Infrastructure
-```bash
-# Deploy Modal app with GPU training
-cd backend
-MODAL_FORCE_BUILD=1 uv run modal deploy modal_playground_training.py
+### Smart Policy Selection System
 
-# Quick test with 100K steps (~30 seconds on H100)
-uv run python playground_trainer.py --quick-test \
-  --env Go1JoystickFlatTerrain \
-  --category locomotion
+The platform intelligently chooses between three approaches based on task complexity:
 
-# Full training with 30M steps (~1 minute on H100)
-uv run python playground_trainer.py \
-  --env Go1JoystickFlatTerrain \
-  --category locomotion \
-  --steps 30000000
+1. **Command-based (0 seconds)**: Direct velocity commands
+   - Success rate: ~70% for basic motions
+   - Use case: Simple choreography, dance moves
 
-# List trained models
-uv run python playground_trainer.py --list-models
-```
+2. **Fine-tuning (30-60 seconds)**: Quick adaptation of pre-trained policies
+   - Success rate: ~90% for similar tasks  
+   - Use case: Task variations, style transfer
 
-### Completed User Experience
-1. **Landing Page**
-   - Clean React interface with training pipeline tabs
-   - API keys managed via .env file (developer setup)
-   - Dynamic scene and model selection from backend
-   
-2. **Policy Generation Flow**
-   ```
-   User inputs: "Make the robot dance"
-   Selects: Scene (e.g., Unitree G1 humanoid)
-   Selects: LLM Model (Claude 4, GPT-4o, etc.)
-   
-   System generates:
-   - Multiple reward functions (dense, sparse, shaped)
-   - Proper function definitions with semantic APIs
-   - Code preview in expandable cards
-   ```
+3. **Full training (8+ minutes)**: Complete policy training from scratch
+   - Success rate: ~95% for any feasible task
+   - Use case: Novel behaviors, complex objectives
 
-3. **Training Pipeline**
-   ```
-   User selects: Preferred reward approach
-   Clicks: "Start Training"
-   
-   System shows:
-   - Real-time training progress
-   - Episode count and reward curves
-   - ETA and status updates
-   - Model export on completion
-   ```
+## 🏗️ System Components
 
-4. **Current Results**
-   - Successful end-to-end training demonstrated
-   - Models exported to ONNX format
-   - Training videos and progress logs
-   - 200+ reward achieved in demo tasks
+### LLM-Generated Reward Functions
+{{ ... }}
 
-### Next Phase: Browser Integration
-1. **MuJoCo WASM Integration**
-   - Replace backend simulation with browser WASM
-   - ONNX inference directly in browser
-   - 3D visualization with Three.js
-   - No server dependency for inference
+### Browser Simulation Stack
+- **MuJoCo WASM**: Physics simulation in browser
+- **WebSocket streaming**: Real-time JAX inference from server
+- **React components**: Training UI and robot visualization
 
-2. **Enhanced UI**
-   - 3D scene viewer and manipulation
-   - Monaco code editor for reward function editing
-   - Real-time simulation preview
-   - Model comparison and analysis
+## 🔄 Training Pipeline
 
-## MuJoCo Playground Bridge Architecture
+1. **Reward Generation**: LLM creates reward function from natural language
+2. **GPU Training**: Modal container runs Brax PPO training
+3. **Model Storage**: Trained JAX params saved to Modal volume
+4. **Inference Ready**: Server loads model for WebSocket streaming
 
-### The Critical Connection
-
-**BREAKTHROUGH**: We can extract complete MuJoCo XML scenes from Playground environments and load them directly in the frontend MuJoCo WASM viewer.
+### Progressive Training Strategy
 
 ```python
-# Backend: Extract any Playground environment as XML
-env = registry.locomotion.load("Go1JoystickFlatTerrain")
-complete_xml = env.sys.to_xml()  # Full scene: robot + terrain + physics
-
-# Frontend: Load directly in browser
-mujoco.Model.load_from_xml(complete_xml)
-# Result: User sees Go1 robot in complete outdoor park scene!
-```
-
-### Scene Export API
-
-```python
-@app.get("/api/playground/environments")
-def list_playground_environments():
-    """List all 52 available environments by category"""
-    return {
-        "locomotion": ["Go1JoystickFlatTerrain", "BerkeleyHumanoidJoystickFlatTerrain", ...],
-        "manipulation": ["PandaPickCube", "AlohaHandOver", ...], 
-        "dm_control_suite": ["HumanoidRun", "CheetahRun", ...]
-    }
-
-@app.get("/api/playground/{category}/{env_name}/xml")
-def get_environment_xml(category: str, env_name: str):
-    """Export complete MuJoCo XML for any playground environment"""
-    registry_obj = getattr(registry, category)
-    env = registry_obj.load(env_name)
-    xml_string = env.sys.to_xml()
+async def generate_policy_progressive(task, robot, time_budget):
+    # Try approaches from fastest to slowest
+    if time_budget == "fast":
+        # Level 1: Command-based
+        return generate_command_policy(task)
     
-    return {
-        "xml": xml_string,
-        "env_name": env_name,
-        "robot_type": extract_robot_type(xml_string),
-        "scene_description": get_scene_description(env_name)
-    }
+    elif time_budget == "medium":
+        # Level 2: Fine-tuning
+        base_policy = load_pretrained(robot)
+        reward_fn = generate_reward(task)
+        return finetune_policy(base_policy, reward_fn, steps=1M)
+    
+    else:  # unlimited
+        # Level 3: Full training
+        reward_fn = generate_reward(task)
+        return train_from_scratch(reward_fn, steps=30M)
 ```
 
-### Frontend Scene Selector
+## 🔑 Key Features
 
-```javascript
-// 1. Populate scene dropdown
-const environments = await fetch('/api/playground/environments').then(r => r.json());
+### Multi-Provider LLM Support
+{{ ... }}
 
-// 2. User selects: "Go1JoystickFlatTerrain"
-const selectedEnv = "Go1JoystickFlatTerrain";
+### Brax/JAX Training Stack
+{{ ... }}
 
-// 3. Load complete scene XML
-const {xml, robot_type} = await fetch(
-    `/api/playground/locomotion/${selectedEnv}/xml`
-).then(r => r.json());
-
-// 4. Initialize MuJoCo with complete scene
-const model = mujoco.Model.load_from_xml(xml);
-const simulation = new mujoco.Simulation(model);
-
-// 5. User now sees Go1 robot in full outdoor terrain!
-```
-
-### Scene Categories & Visual Contexts
-
-| **Environment** | **Visual Context** | **Demo Appeal** |
-|-----------------|-------------------|-----------------|
-| `Go1JoystickFlatTerrain` | Outdoor park with grass terrain | High - recognizable robot |
-| `BerkeleyHumanoidJoystickFlatTerrain` | Flat ground for human-like movement | High - emotional connection |
-| `SpotJoystickGaitTracking` | Industrial/construction setting | Medium - professional appeal |
-| `PandaPickCube` | Laboratory workspace with cube | Medium - precise manipulation |
-| `AlohaHandOver` | Kitchen/workshop environment | High - relatable cooking tasks |
-
-## JAX/Flax to ONNX Conversion Pipeline
-
-### The Training → Browser Pipeline
+### JAX/Flax Model Pipeline
 
 ```python
-# 1. Train policy with Brax PPO (JAX/Flax)
-policy_fn, params = train_brax_policy(env, reward_fn, steps=100_000)
+# 1. Train policy with Brax PPO
+from brax.training.agents.ppo import train as ppo
+make_inference_fn, params, metrics = ppo.train(env, config)
 
-# 2. Convert JAX model to ONNX for browser inference
-def convert_jax_to_onnx(policy_fn, params, input_shape):
-    # JAX → TensorFlow conversion
-    import jax2tf
-    tf_fn = jax2tf.convert(lambda x: policy_fn(params, x))
+# 2. Save JAX params for server-side inference
+def save_jax_params(params, obs_size, action_size):
+    model_data = {
+        'params': params,
+        'obs_size': obs_size,
+        'action_size': action_size,
+        'timestamp': datetime.now()
+    }
     
-    # Create TensorFlow concrete function
-    tf_concrete = tf_fn.get_concrete_function(
-        tf.TensorSpec(input_shape, tf.float32)
+    path = f"/models/{policy_id}.pkl"
+    with open(path, 'wb') as f:
+        pickle.dump(model_data, f)
+    
+    return path
+
+# 3. Load and run inference on server
+def load_jax_model(model_path):
+    with open(model_path, 'rb') as f:
+        model_data = pickle.load(f)
+    
+    # Recreate inference function
+    policy_network = make_ppo_networks(
+        model_data['obs_size'],
+        model_data['action_size']
     )
     
-    # TensorFlow → ONNX export
-    import tf2onnx
-    onnx_model, _ = tf2onnx.convert.from_function(
-        tf_concrete,
-        input_signature=[tf.TensorSpec(input_shape, tf.float32)]
-    )
-    
-    return onnx_model
-
-# 3. Save ONNX model to Modal volume
-onnx_path = f"/models/{policy_id}.onnx"
-save_onnx_model(onnx_model, onnx_path)
-
-# 4. Return download URL for frontend
-return {
-    "policy_id": policy_id,
-    "method_used": "fine_tuned", 
-    "training_time": "45 seconds",
-    "quality_score": 0.87,
-    "alternatives_tried": ["command_based"],
-    "model_ready": true,
-    "onnx_url": "/models/dance_policy_v1.onnx"
-}
+    return policy_network, model_data['params']
 ```
 
-### Browser Policy Execution
+### Frontend Integration
 
 ```javascript
-// 1. Download trained ONNX model
-const policyResponse = await fetch('/api/models/dance_policy_v1.onnx');
-const policyBuffer = await policyResponse.arrayBuffer();
+// WebSocket connection for real-time inference
+const ws = new WebSocket('ws://localhost:8000/api/models/my_policy/inference');
 
-// 2. Load ONNX model in browser
-const session = await ort.InferenceSession.create(policyBuffer);
-
-// 3. Real-time policy inference loop
+// MuJoCo simulation loop
 function simulationStep() {
-    // Get current robot state from MuJoCo
-    const observation = simulation.getObservation();
+    // Get robot state from MuJoCo
+    const observation = mujoco.getState();
     
-    // Run policy inference
-    const feeds = {'input': new ort.Tensor('float32', observation, [1, obsSize])};
-    const results = await session.run(feeds);
-    const actions = results.output.data;
+    // Send to server for JAX inference
+    ws.send(JSON.stringify({observation}));
     
-    // Apply actions to MuJoCo simulation
-    simulation.setActions(actions);
-    simulation.step();
-    
-    requestAnimationFrame(simulationStep);
+    // Receive action from server
+    ws.onmessage = (event) => {
+        const action = JSON.parse(event.data);
+        mujoco.setControl(action);
+    };
 }
 ```
 
-### Performance Optimization
+## 🎯 Success Metrics
 
-**Training Time Targets:**
-- **Command-based**: 0 seconds (direct velocity command generation)
-- **Fine-tuning**: 30-60 seconds (build on pre-trained locomotion) 
-- **Full training**: 8-15 minutes (complete custom behavior)
+- **Training time**: < 60 seconds for fine-tuning, < 8 minutes for full training
+- **Success rate**: 90%+ task completion
+- **Latency**: < 50ms inference round-trip
+- **Scale**: Support 100+ concurrent training jobs
 
-**Model Size Optimization:**
-- **Policy compression**: Quantize ONNX to FP16 for faster download
-- **Batch conversion**: Pre-convert popular base policies
-- **Progressive loading**: Start with low-quality, upgrade to high-quality
+## 📊 Performance Optimization
 
-**Browser Performance:**
-- **ONNX.js optimization**: Use WebGL/WASM backends
-- **Inference caching**: Cache policy outputs for repeated states
-- **Frame rate targets**: 30 FPS simulation with real-time policy execution
+- **GPU utilization**: H100 for fastest training
+- **JAX compilation**: JIT-compiled inference functions
+- **WebSocket efficiency**: Binary protocol for observations/actions
+- **Caching**: Pre-trained base policies for common robots
 
-## Intelligent Policy Generation System
+## 🔄 API Response Examples
 
-TabRL features an **intelligent policy generation API** that automatically selects the optimal training approach based on task complexity, time budget, and quality requirements.
-
-### Auto-Strategy Selection
-
-The system tries approaches from **fastest to slowest**:
-
-#### **Level 1: Command-Based Generation (0 seconds)**
-- Generate velocity commands directly from task description
-- Use existing pre-trained joystick policies 
-- Best for: Dance, choreography, simple behaviors
-- Success rate: ~70% for motion tasks
-
-#### **Level 2: Fine-Tuning (30-60 seconds)**  
-- Quick fine-tune existing policies with custom rewards
-- Leverage pre-trained locomotion/manipulation skills
-- Best for: Task-specific behaviors, style variations
-- Success rate: ~90% for similar tasks
-
-#### **Level 3: Full Training (8+ minutes)**
-- Train from scratch with completely custom rewards
-- Maximum flexibility and task coverage
-- Best for: Novel tasks, complex multi-objective behaviors
-- Success rate: ~95% for any feasible task
-
-### Smart API Design
-
-```python
-POST /api/generate-policy
+### Policy Generation Response
+```json
 {
   "task_description": "Make robot dance to electronic music",
-  "robot": "Go1", 
-  "time_budget": "fast|medium|unlimited",
-  "quality_threshold": 0.8,
-  "scene_context": "urban_playground"
-}
-
-Response:
-{
   "policy_id": "dance_policy_v1",
-  "method_used": "fine_tuned", 
-  "training_time": "45 seconds",
-  "quality_score": 0.87,
-  "alternatives_tried": ["command_based"],
-  "model_ready": true,
-  "onnx_url": "/models/dance_policy_v1.onnx"
+  "training_method": "fine_tuning",
+  "base_policy": "locomotion_base_v2",
+  "training_time_estimate": "45 seconds",
+  "reward_functions": [
+    {
+      "name": "dance_reward",
+      "type": "dense",
+      "code": "def compute_reward(state, action):\n    ..."
+    }
+  ]
 }
 ```
 
-### Quality Scoring System
+{{ ... }}
 
-Each approach gets evaluated on:
-- **Task completion accuracy** (0-1)
-- **Movement naturalness** (0-1) 
-- **Safety/stability** (0-1)
-- **Energy efficiency** (0-1)
+## 🏃 Getting Started
 
-## Recommended Robot Selection
+{{ ... }}
 
-Based on MuJoCo Playground's 52 available environments, we recommend these **hero robots** for maximum visual impact and user engagement:
+## 📚 References
 
-### Locomotion Stars (Primary Focus)
-
-#### **Boston Dynamics Go1 Quadruped**
-- **Environments**: `Go1JoystickFlatTerrain`, `Go1JoystickRoughTerrain`
-- **Why**: Most recognizable robot, great for outdoor scenes
-- **Best demos**: Parkour, dancing, following, patrol
-
-#### **Berkeley Humanoid** 
-- **Environments**: `BerkeleyHumanoidJoystickFlatTerrain`, `BerkeleyHumanoidJoystickRoughTerrain`
-- **Why**: Most human-like, emotional connection
-- **Best demos**: Dancing, martial arts, sports, social interaction
-
-#### **Boston Dynamics Spot**
-- **Environments**: `SpotJoystickGaitTracking`, `SpotFlatTerrainJoystick`
-- **Why**: Industrial icon, professional appeal
-- **Best demos**: Construction sites, inspection, security patrol
-
-### Manipulation Masters (Secondary)
-
-#### **Aloha Bimanual Robot**
-- **Environments**: `AlohaHandOver`, `AlohaSinglePegInsertion`
-- **Why**: Dual-arm coordination, impressive dexterity
-- **Best demos**: Cooking, assembly, collaborative tasks
-
-#### **Franka Panda Arm**
-- **Environments**: `PandaPickCube`, `PandaOpenCabinet`, `PandaRobotiqPushCube`
-- **Why**: Industry standard, precise manipulation
-- **Best demos**: Laboratory work, delicate assembly, bartending
-
-### Classic Control (Tertiary)
-
-#### **Humanoid Walker**
-- **Environments**: `HumanoidRun`, `HumanoidWalk`, `HumanoidStand`
-- **Why**: Athletic movements, sports scenarios
-- **Best demos**: Running, gymnastics, rehabilitation
-
-### Scene Pairing Recommendations
-
-| Robot | Ideal Scene | Demo Scenario |
-|-------|-------------|---------------|
-| Go1 | Urban park, warehouse | Package delivery, security patrol |
-| Berkeley Humanoid | Living room, dance studio | Home assistant, entertainment |
-| Spot | Construction site, factory | Industrial inspection, maintenance |
-| Aloha | Kitchen, workshop | Cooking demo, assembly line |
-| Panda | Laboratory, bar | Scientific experiments, cocktail making |
-
-## 🚀 MVP Features (Hackathon Scope)
-
-### Must Have
-- [ ] Load pre-built scenes (3-5 examples)
-- [ ] Natural language → Policy generation
-- [ ] View generated code
-- [ ] Start training with one click
-- [ ] See training progress
-- [ ] Run trained policy in browser
-- [ ] Basic error handling
-
-### Nice to Have
-- [ ] Edit generated code
-- [ ] Custom scene upload
-- [ ] Save/load policies
-- [ ] Share policies via URL
-- [ ] Multiple policies per scene
-- [ ] Training history
-
-### Post-Hackathon
-- [ ] Community policy library
-- [ ] Advanced RL algorithms
-- [ ] Multi-agent training
-- [ ] Custom reward functions
-- [ ] Policy composition
-
-## 📊 Success Metrics
-
-1. **Time to First Success**: < 5 minutes from landing to seeing a trained robot
-2. **Training Success Rate**: > 70% of prompts result in working policies  
-3. **Performance**: 60 FPS simulation, < 10ms inference latency
-4. **Browser Compatibility**: Chrome, Firefox, Safari (latest versions)
-
-## 🔧 Development Priorities
-
-1. **Get Basic Flow Working**
-   - Scene loads → User prompts → Training starts → Policy runs
-
-2. **Polish the Experience**
-   - Smooth animations
-   - Clear status messages
-   - Helpful error messages
-
-3. **Add Power Features**
-   - Code editing
-   - Parameter tuning
-   - Advanced scenes
-
-## 📝 Example Prompts to Support
-
-- "Pick up the [color] block"
-- "Walk to the target"
-- "Balance the pole"
-- "Sort objects by size"
-- "Avoid obstacles while moving forward"
-- "Throw the ball into the basket"
-- "Open the door"
-- "Follow the moving target"
-
-## 🐛 Error Handling
-
-### Common Issues to Handle
-1. **Invalid API Keys**: Clear message, re-prompt
-2. **Training Timeout**: Offer to extend or download partial
-3. **Code Generation Failure**: Retry with modified prompt
-4. **Browser Compatibility**: Graceful degradation message
-5. **WebContainer Boot Failure**: Fallback instructions
-
-## 📚 Resources for Claude/Developers
-
-### Key Libraries
+- MuJoCo Documentation: [mujoco.org](https://mujoco.org)
+- Brax Physics Engine: [github.com/google/brax](https://github.com/google/brax)
+- JAX Documentation: [jax.readthedocs.io](https://jax.readthedocs.io)
+- Modal Platform: [modal.com/docs](https://modal.com/docs)
 - MuJoCo WASM: [github.com/google-deepmind/mujoco_wasm](https://github.com/google-deepmind/mujoco_wasm)
-- StackBlitz WebContainers: [webcontainers.io](https://webcontainers.io)
-- ONNX Runtime Web: [onnxruntime.ai/docs/get-started/with-javascript.html](https://onnxruntime.ai/docs/get-started/with-javascript.html)
-- Modal: [modal.com/docs](https://modal.com/docs)
 
-### File Structure to Create
-```
-/src/
-├── components/
-│   ├── SceneSelector.jsx
-│   ├── MuJoCoViewer.jsx
-│   ├── PromptInterface.jsx
-│   ├── CodeEditor.jsx
-│   ├── TrainingMonitor.jsx
-│   └── PolicyRunner.jsx
-├── webcontainer/
-│   ├── server.py
-│   ├── requirements.txt
-│   └── inference.py
-├── modal/
-│   ├── generate_policy.py
-│   └── train_policy.py
-├── utils/
-│   ├── mujoco_loader.js
-│   ├── api_client.js
-│   └── storage.js
-└── App.jsx
-```
+## 🧪 Testing Checklist
 
-## 🚀 Quick Start Guide for Development
+### Backend Tests
+{{ ... }}
 
-### Initial Setup Actions (Day 1)
-1. **Clone MuJoCo Resources**
-   ```bash
-   git clone https://github.com/google-deepmind/mujoco_menagerie
-   git clone https://github.com/zalo/mujoco_wasm
-   ```
+### Training Pipeline Tests
+- [ ] Modal GPU training launches successfully
+- [ ] Brax PPO converges for test tasks
+- [ ] JAX models save and load correctly
+- [ ] WebSocket inference streams smoothly
 
-2. **Set Up Modal**
-   - Create Modal account
-   - Install CLI: `pip install modal`
-   - Deploy initial functions:
-     ```bash
-     modal deploy modal/generate_policy.py
-     modal deploy modal/train_policy.py
-     ```
+### Frontend Tests
+- [ ] MuJoCo WASM loads robot scenes
+- [ ] WebSocket connection maintains stability
+- [ ] Training progress updates in real-time
+- [ ] Robot responds to inferred actions
 
-3. **Frontend Viewer Integration**
-   - Get viewer repo from co-hacker
-   - Integrate with mujoco_wasm
-   - Test basic scene loading
-
-### First Implementation Tasks
-1. **WebContainer Bootstrap**
-   - Initialize StackBlitz WebContainers SDK
-   - Create Flask server with settings API
-   - Test key storage/retrieval
-   - Verify proxy to Modal works
-
-2. **Hello World Flow**
-   ```javascript
-   // Test each component:
-   1. Load a simple scene (cartpole)
-   2. Send test prompt to Modal
-   3. Get generated policy back
-   4. Start training job
-   5. Download ONNX model
-   6. Run inference in WebContainer
-   ```
-
-3. **Basic UI Components**
-   - API key input form
-   - Scene selector (just 3-4 scenes initially)
-   - Simple prompt input
-   - Status display
-
-### Validation Checklist
-- [ ] WebContainer boots successfully
-- [ ] Settings persist in browser
-- [ ] Modal functions callable via proxy
-- [ ] ONNX model downloads work
-- [ ] Inference runs at 60 FPS
-- [ ] No CORS errors!
-
-## 🎯 Definition of Done
-
-The platform is complete when a user can:
-1. Open the website
-2. Select a robot scene  
-3. Type what they want the robot to do
-4. See the robot learning
-5. Watch the trained robot perform the task
-6. All within 5 minutes, in one browser tab
-
----
-
-*This PRD should give Claude or any developer a complete picture of what to build. The key is emphasizing the browser-first approach and the magical experience of seeing a robot learn from natural language, all without leaving the webpage.*
+### Integration Tests
+- [ ] End-to-end: prompt → training → inference → robot motion
+- [ ] Multiple concurrent training jobs work
+- [ ] Server handles inference for multiple clients
+- [ ] System recovers from training failures
